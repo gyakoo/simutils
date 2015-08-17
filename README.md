@@ -2,29 +2,14 @@
 List of small utility libraries written in C/C++ for simulation related work.
 
 # Libraries
-### com/
-Communication libraries.
 
-library    | lastest version | description
----------- | --------------- | --------------------------------
-**com_ip.h** | 0.1 | Foundation socket library based in IP protocol (UDP/TCP)
-**com_cigi.h** | 0.1 | Common Image Generator Interface functions
-
-### proj/
-Map projections functions.
-
-library    | lastest version | description
----------- | --------------- | --------------------------------
-**proj.h** | 0.1 | Functions to convert between different projections
-
-### flt/
-Openflight related utilities.
-
-library    | lastest version | description
----------- | --------------- | --------------------------------
-**flt.h** | 0.1 | Load geometry and other metadata from Openflight files
-**flt_sgirgb.h** | 0.1 | Decode SGI RGB/RGBA format from file. RLE and Verbatim modes supported.
-
+library    | lastest version | category | description
+---------- | --------------- | ---------| ------------
+**com_ip.h** | 0.1a | communications | Foundation socket library based in IP protocol (UDP/TCP)
+**com_cigi.h** | 0.1a | communications | Common Image Generator Interface functions
+**proj.h** | 0.1a | projections | Functions to convert between different projections
+**flt.h** | 0.1a | openflight | Load geometry and other metadata from Openflight files
+**flt_sgirgb.h** | 0.1a | openflight | Decode SGI RGB/RGBA format from file. RLE and Verbatim modes supported.
 
 # Utils
 Set of applications and small tools making use of these libraries.
