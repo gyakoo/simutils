@@ -3,16 +3,16 @@ List of small utility libraries written in C/C++ for simulation related work.
 
 # Libraries
 ## /com
-
 Communication libraries.
+
 library    | lastest version | description
 ---------- | --------------- | --------------------------------
 **com_ip.h** | 0.1 | Foundation socket library based in IP protocol (UDP/TCP)
 **com_cigi.h** | 0.1 | Common Image Generator Interface functions
 
 ## /proj
-
 Map projections functions.
+
 library    | lastest version | description
 ---------- | --------------- | --------------------------------
 **proj.h** | 0.1 | Functions to convert between different projections
