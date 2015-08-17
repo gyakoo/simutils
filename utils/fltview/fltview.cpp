@@ -10,22 +10,11 @@
 #define FLT_IMPLEMENTATION
 #include <flt.h>
 
-typedef struct temp
-{
-  int a;
-  double b;
-  char c;
-  float d;
-  int e;
-}temp;
-
-#define po(n,t) printf( "offset to " #n ": %d\n", flt_offsetto(n,t) );
-
 int main(int argc, const char** argv)
 {
   flt_opts opts;
   flt of;
-  if ( flt_load_from_filename( "../titanic/TITANIC.flt", &of, &opts) )
+  if ( flt_load_from_filename( "../../../data/titanic/TITANIC.flt", &of, &opts) )
   {
 
   }

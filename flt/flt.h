@@ -22,6 +22,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 
+/*
+DOCUMENTATION 
+
+- Define FLT_NO_OPNAMES to skip opcode name strings
+- Define FLT_IMPLEMENTATION before including this in *one* C/CPP file to expand the implementation
+- Define the supported version in FLT_VERSION. Maximum supported version is FLT_GREATER_SUPPORTED_VERSION
+*/
+
 #ifndef _FLT_H_
 #define _FLT_H_
 
@@ -67,11 +75,15 @@ extern "C" {
     // Returns reason of the error code. Define FLT_LONG_ERR_MESSAGES for longer texts.
   const char* flt_get_err_reason(int errcode);
 
+
+
 #ifdef __cplusplus
 };
 
 // FLT Opcodes
+#define FLT_OP_DONTCARE 0
 #define FLT_OP_HEADER 1
+#define FLT_OP_MAX 154
 
 #endif
 
@@ -146,6 +158,7 @@ typedef struct flt_end_desc
   flt_u16 offs;
 }flt_end_desc;
 
+#pragma pack(push,1)
 typedef struct flt_op
 { 
   flt_u16 op;
@@ -209,8 +222,8 @@ typedef struct flt_header
   flt_i32   reserved6;
   double    earth_major_axis;
   double    earth_minor_axis;
-  flt_i32   reserved7;
 }flt_header;
+#pragma pack (pop)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -220,6 +233,8 @@ bool flt_opcode(flt_u16 op, void* data, FILE* f);
 void flt_swap_desc(void* data, flt_end_desc* desc);
 void flt_swap_rec(void* data, flt_u16 op);
 void flt_swap_op_header(void* data);
+const char* flt_get_op_name(flt_u16 opcode);
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 bool flt_err(int err, flt* of, FILE* f)
 {
@@ -261,8 +276,11 @@ bool flt_oph(flt_u16 op, flt_op* data, FILE* f)
 bool flt_opcode(flt_u16 op, void* data, FILE* f)
 {
   flt_op oh;
+  flt_u16 len;
+
   if  (!flt_oph(op,&oh,f) ) return false;
-  if ( fread(data, 1, oh.length, f) != oh.length ) return false;
+  len = oh.length>sizeof(flt_op)?oh.length-sizeof(flt_op):0;
+  if ( fread(data, 1, len, f) != len) return false;
   flt_swap_rec(data,op);
   return true;
 }
@@ -272,6 +290,8 @@ bool flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 {
   FILE* f;
   flt_header h;
+  flt_op oh;
+  flt_u16 leftLength;
 
   // opening file and reading header for version check
   f = fopen(filename, "rb");
@@ -279,7 +299,15 @@ bool flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   if ( !flt_opcode(FLT_OP_HEADER, &h, f) )  return flt_err(FLT_ERR_OPREAD, of, f);
   if ( h.format_rev > FLT_VERSION )         return flt_err(FLT_ERR_VERSION, of, f);
 
-  //
+
+  while ( !feof(f) )
+  {
+    flt_oph(FLT_OP_DONTCARE, &oh,f);     
+    leftLength = oh.length>sizeof(flt_op) ? oh.length - sizeof(flt_op) : 0;
+    if ( oh.op != 68 && oh.op != 69 && oh.op!=70 )
+      printf( "(%d) %s\n", oh.op, flt_get_op_name(oh.op));
+    fseek(f,leftLength,SEEK_CUR);
+  }
 
   return flt_err(FLT_OK,of,f);
 }
@@ -337,6 +365,157 @@ void flt_swap_desc(void* data, flt_end_desc* desc)
     desc++;
   }
 };
+
+const char* flt_get_op_name(flt_u16 opcode)
+{
+#ifndef FLT_NO_OPNAMES
+  static const char* names[FLT_OP_MAX] = {
+    "",                                                                   // 0
+    "Header",                                                             // 1
+    "Group",                                                              // 2
+    "Level of Detail",                                                    // 3 (obsolete)
+    "Object",                                                             // 4
+    "Face",                                                               // 5
+    "Vertex with ID",                                                     // 6 (obsolete)
+    "Short Vertex w/o ID",                                                // 7 (obsolete) 
+    "Vertex with Color",                                                  // 8 (obsolete)
+    "Vertex with Color and Normal",                                       // 9 (obsolete)
+    "Push Level",                                                         // 10
+    "Pop Level",                                                          // 11
+    "Translate",                                                          // 12 (obsolete)
+    "Degree of Freedom",                                                  // 13 (obsolete)
+    "Degree of Freedom",                                                  // 14
+    "",                                                                   // 15
+    "Instance Reference",                                                 // 16 (obsolete)  
+    "Instance Definition",                                                // 17 (obsolete)
+    "",                                                                   // 18
+    "Push Subface",                                                       // 19
+    "Pop Subface",                                                        // 20
+    "Push Extension",                                                     // 21
+    "Pop Extension",                                                      // 22
+    "Continuation",                                                       // 23
+    "", "", "", "", "", "", "",                                           // 24-30
+    "Comment",                                                            // 31 
+    "Color Palette",                                                      // 32
+    "Long ID",                                                            // 33
+    "", "", "", "", "", "",                                               // 34-39
+    "Translate",                                                          // 40 (obsolete)
+    "Rotate about Point",                                                 // 41 (obsolete)
+    "Rotate about Edge",                                                  // 42 (obsolete)
+    "Scale",                                                              // 43 (obsolete)
+    "Translate",                                                          // 44 (obsolete)
+    "Scale nonuniform",                                                   // 45 (obsolete)
+    "Rotate about Point",                                                 // 46 (obsolete)
+    "Rotate and/or Scale to Point",                                       // 47 (obsolete)
+    "Put",                                                                // 48 (obsolete)
+    "Matrix",                                                             // 49
+    "Vector",                                                             // 50
+    "Bounding Box",                                                       // 51 (obsolete)
+    "Multitexture",                                                       // 52
+    "UV List",                                                            // 53
+    "",                                                                   // 54
+    "Binary Separating Plane",                                            // 55
+    "", "", "", "",                                                       // 56-59
+    "Replicate",                                                          // 60
+    "Instance Reference",                                                 // 61
+    "Instance Definition",                                                // 62
+    "External Reference",                                                 // 63
+    "Texture Palette",                                                    // 64
+    "Eyepoint Palete",                                                    // 65 (obsolete)
+    "Material Palette",                                                   // 66 (obsolete)
+    "Vertex Palette",                                                     // 67
+    "Vertex with Color",                                                  // 68
+    "Vertex with Color and Normal",                                       // 69
+    "Vertex with Color, Normal and UV",                                   // 70
+    "Vertex with Color and UV",                                           // 71
+    "Vertex List",                                                        // 72
+    "Level of Detail",                                                    // 73
+    "Bounding Box",                                                       // 74
+    "",                                                                   // 75
+    "Rotate About Edge",                                                  // 76
+    "Scale",                                                              // 77 (obsolete)
+    "Translate",                                                          // 78
+    "Scale",                                                              // 79
+    "Rotate About Point",                                                 // 80
+    "Rotate and/or Scale to Point",                                       // 81
+    "Put",                                                                // 82
+    "Eyepoint and Trackplane Palette",                                    // 83
+    "Mesh",                                                               // 84
+    "Local Vertex Pool",                                                  // 85
+    "Mesh Primitive",                                                     // 86
+    "Road Segment",                                                       // 87
+    "Road Zone",                                                          // 88
+    "Morph Vertex List",                                                  // 89
+    "Linkage Palette",                                                    // 90
+    "Sound",                                                              // 91
+    "Road Path",                                                          // 92
+    "Sound Palette",                                                      // 93
+    "General Matrix",                                                     // 94
+    "Text",                                                               // 95
+    "Switch",                                                             // 96
+    "Line Style Palette",                                                 // 97
+    "Clip Region",                                                        // 98
+    "",                                                                   // 99
+    "Extension",                                                          // 100
+    "Light Source",                                                       // 101
+    "Light Source Palette",                                               // 102
+    "Reserved",                                                           // 103
+    "Reserved",                                                           // 104
+    "Bounding Sphere",                                                    // 105
+    "Bounding Cylinder",                                                  // 106
+    "Bounding Convex Hull",                                               // 107
+    "Bounding Volume Center",                                             // 108
+    "Bounding Volume Orientation",                                        // 109
+    "Reserved",                                                           // 110
+    "Light Point",                                                        // 111
+    "Texture Mapping Palette",                                            // 112
+    "Material Palette",                                                   // 113
+    "Name Table",                                                         // 114
+    "Continuously Adaptive Terrain (CAT)",                                // 115
+    "CAT Data",                                                           // 116
+    "Reserved",                                                           // 117
+    "Reserved",                                                           // 118
+    "Bounding Histogram",                                                 // 119
+    "Reserved",                                                           // 120
+    "Reserved",                                                           // 121
+    "Push Attribute",                                                     // 123
+    "Pop Attribute",                                                      // 124
+    "Reserved",                                                           // 125
+    "Curve",                                                              // 126
+    "Road Construction",                                                  // 127
+    "Light Point Appearance Palette",                                     // 128
+    "Light Point Animation Palette",                                      // 129
+    "Indexed Light Point",                                                // 130
+    "Light Point System",                                                 // 131
+    "Indexed String",                                                     // 132
+    "Shader Palette",                                                     // 133
+    "Reserved",                                                           // 134
+    "Extended Material Header",                                           // 135
+    "Extended Material Ambient",                                          // 136
+    "Extended Material Diffuse",                                          // 137
+    "Extended Material Specular",                                         // 138
+    "Extended Material Emissive",                                         // 139
+    "Extended Material Alpha",                                            // 140
+    "Extended Material Light Map",                                        // 141
+    "Extended Material Normal Map",                                       // 142
+    "Extended Material Bump Map",                                         // 143
+    "Reserved",                                                           // 144
+    "Extended Material Shadow Map",                                       // 145
+    "Reserved",                                                           // 146
+    "Extended Material Reflection Map",                                   // 147
+    "Extension GUID Palette",                                             // 148
+    "Extension Field Boolean",                                            // 149
+    "Extension Field Integer",                                            // 150
+    "Extension Field Float",                                              // 151
+    "Extension Field Double",                                             // 152
+    "Extension Field String",                                             // 153
+    "Extension Field XML String",                                         // 154
+  };
+  return (opcode<=FLT_OP_MAX) ? names[opcode] : "Unknown";
+#else
+return "";
+#endif
+}
 
 #endif
 #endif
