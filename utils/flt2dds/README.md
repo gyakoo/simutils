@@ -4,10 +4,8 @@ A single-cpp file C++11 tool to convert all imagery data from Openflight graph i
 # building
 * Double click in the .bat file to generate for VS2012, or premake for another target.<br/>
 * Be sure the <a href="https://github.com/gyakoo/flt/blob/master/flt_sgirgb.h">flt_sgirgb.h</a> file is under parent directory "../flt/" or copy it here and change premake4.lua
-* In order to launch from VS, you'll need to add this post-build step to all-configurations all-platforms properties for the flt2dds project:<br/>
-```
-copy /Y $(SolutionDir)$(LocalDebuggerWorkingDirectory)\nvtt.dll $(SolutionDir)
-```
+* In order to run/distribute you need to copy the corresponding nvtt.dll binary for your configuration in the same place where the flt2dds.exe executable is.
+
 (premake does not support build-step so far.)
 
 # features
