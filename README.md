@@ -2,7 +2,7 @@
 List of small utility libraries written in C/C++ for simulation related work.
 
 # Libraries
-## /com
+### com/
 Communication libraries.
 
 library    | lastest version | description
@@ -10,14 +10,14 @@ library    | lastest version | description
 **com_ip.h** | 0.1 | Foundation socket library based in IP protocol (UDP/TCP)
 **com_cigi.h** | 0.1 | Common Image Generator Interface functions
 
-## /proj
+### proj/
 Map projections functions.
 
 library    | lastest version | description
 ---------- | --------------- | --------------------------------
 **proj.h** | 0.1 | Functions to convert between different projections
 
-## /flt
+### flt/
 Openflight related utilities.
 
 library    | lastest version | description
@@ -28,10 +28,12 @@ library    | lastest version | description
 
 # Utils
 Set of applications and small tools making use of these libraries.
-## flt2dds
+### flt2dds
 A single-cpp file C++11 tool to convert all imagery data from Openflight graph into DDS. <br/>
 See <a href="utils/flt2dds/readme.md">flt2dds readme</a> for more information.
 
+### fltviewer
+Small OpenGL FLT viewer.
 
 # Why single file headers?
 
