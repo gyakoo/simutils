@@ -3,6 +3,7 @@ List of small utility libraries written in C/C++ for simulation related work.
 
 # Libraries
 ## /com
+
 Communication libraries.
 library    | lastest version | description
 ---------- | --------------- | --------------------------------
@@ -10,6 +11,7 @@ library    | lastest version | description
 **com_cigi.h** | 0.1 | Common Image Generator Interface functions
 
 ## /proj
+
 Map projections functions.
 library    | lastest version | description
 ---------- | --------------- | --------------------------------
