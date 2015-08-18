@@ -25,7 +25,7 @@ int main(int argc, const char** argv)
   flt_opts opts={0};
   flt of={0};
 
-  opts.flags |= FLT_OPT_HEADER;
+  //opts.flags |= FLT_OPT_HEADER;
   opts.palflags |= FLT_OPT_PAL_TEXTURE;
 
   if ( flt_load_from_filename( "../../../data/titanic/TITANIC.flt", &of, &opts)==FLT_OK )

@@ -194,6 +194,7 @@ typedef struct flt_pal_tex
 #define FLT_OPT_PAL_EYEPNT_TCKPLN (1<<12) // eyepoint and trackplane
 #define FLT_OPT_PAL_LINKAGE       (1<<13) // linkage
 #define FLT_OPT_PAL_EXTGUID       (1<<14) // extension GUID
+#define FLT_OPT_PAL_VERTEX        (1<<15) // vertex
  
 // FLT Opcodes
 #define FLT_OP_DONTCARE 0
@@ -269,10 +270,11 @@ void flt_swap64(void* d)
 #endif
 
 #define flt_offsetto(n,t)  ((int)( (unsigned char*)&((t*)(0))->n - (unsigned char*)(0) ))
+#define FLT_RECORD_READER(name) flt_i32 name(flt_op* oh, flt* of)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-typedef flt_i32 (*opfunc)(flt_op* oh, flt* of, flt_opts* opts);
+typedef flt_i32 (*flt_rec_reader)(flt_op* oh, flt* of);
 typedef struct flt_end_desc
 {
   flt_i8 bits;
@@ -284,7 +286,9 @@ typedef struct flt_internal
 {
   FILE* f;
   flt_pal_tex* pal_tex_last;
+  flt_opts* opts;
 }flt_internal;
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -292,9 +296,9 @@ bool flt_err(int err, flt* of);
 bool flt_read_ophead(flt_u16 op, flt_op* data, FILE* f);
 void flt_swap_desc(void* data, flt_end_desc* desc);
 const char* flt_get_op_name(flt_u16 opcode);
-
-flt_i32 flt_func_header(flt_op*, flt*, flt_opts*);   // FLT_OP_HEADER
-flt_i32 flt_func_pal_tex(flt_op*, flt*, flt_opts*);  // FLT_OP_PAL_TEXTURE
+FLT_RECORD_READER(flt_reader_header);     // FLT_OP_HEADER
+FLT_RECORD_READER(flt_reader_pal_tex);    // FLT_OP_PAL_TEXTURE
+FLT_RECORD_READER(flt_reader_pal_vertex); // FLT_OP_PAL_VERTEX
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 bool flt_err(int err, flt* of)
@@ -320,7 +324,7 @@ bool flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 {
   flt_op oh;
   int skipbytes;  
-  opfunc optable[FLT_OP_MAX]={0};
+  flt_rec_reader optable[FLT_OP_MAX]={0};
   flt_internal fltint={0};
 
   // opening file
@@ -328,18 +332,20 @@ bool flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   if ( !fltint.f ) return flt_err(FLT_ERR_FOPEN, of);
 
   // preparing internal
-  of->reserved = &fltint;
-
+  fltint.opts = opts;
+  of->reserved = &fltint;  
+  
   // configuring readers
-  optable[FLT_OP_HEADER] = flt_func_header; // always read header
-  if ( opts->palflags & FLT_OPT_PAL_TEXTURE ) optable[FLT_OP_PAL_TEXTURE] = flt_func_pal_tex;
+  optable[FLT_OP_HEADER] = flt_reader_header; // always read header
+  if ( opts->palflags & FLT_OPT_PAL_TEXTURE ) optable[FLT_OP_PAL_TEXTURE] = flt_reader_pal_tex;
+  if ( opts->palflags & FLT_OPT_PAL_VERTEX )  optable[FLT_OPT_PAL_VERTEX] = flt_reader_pal_vertex;
 
   // reading loop
   while ( flt_read_ophead(FLT_OP_DONTCARE, &oh, fltint.f) )
   {
     // if reader function available, use it
     if ( optable[oh.op] )
-      skipbytes = optable[oh.op](&oh, of, opts);
+      skipbytes = optable[oh.op](&oh, of);
     else
       skipbytes = oh.length-sizeof(flt_op);
     
@@ -388,7 +394,8 @@ bool flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
-flt_i32 flt_func_header(flt_op* oh, flt* of, flt_opts* opts)
+FLT_RECORD_READER(flt_reader_header)
+////////////////////////////////////////////////////////////////////////////////////////////////
 {
   flt_end_desc  desc[]={ 
     {32, 2, flt_offsetto(format_rev,flt_header)},
@@ -408,27 +415,34 @@ flt_i32 flt_func_header(flt_op* oh, flt* of, flt_opts* opts)
     {64, 2, flt_offsetto(earth_major_axis,flt_header)},
     {NULL,NULL,NULL}
   };
-  flt_header _header;
-  flt_header* header=&_header;
   flt_internal* fltint=(flt_internal*)of->reserved;
   int readbytes=oh->length-sizeof(flt_op);
+  flt_i32 format_rev=0;
 
-  // if storing header...
-  if ( opts->flags & FLT_OPT_HEADER ) 
-    of->header = header = (flt_header*)malloc(sizeof(flt_header));
-
-  // read header and swap for endianess
-  readbytes -= fread(header, 1, readbytes, fltint->f);  
-  flt_swap_desc(header,desc);
+  if ( fltint->opts->flags & FLT_OPT_HEADER ) 
+  {
+    // if storing header, read it entirely
+    of->header = (flt_header*)malloc(sizeof(flt_header));
+    readbytes -= fread(of->header, 1, readbytes, fltint->f);  
+    flt_swap_desc(of->header,desc); // endianess
+    format_rev = of->header->format_rev;
+  }
+  else
+  {
+    // if no header needed, just read the version
+    fseek(fltint->f,8,SEEK_CUR); readbytes-=8;
+    readbytes -= fread(&format_rev,1,4,fltint->f);
+    flt_swap32(&format_rev);
+  }
 
   // checking version
-  if ( header->format_rev > FLT_VERSION ) readbytes = -1;
-
+  if ( format_rev > FLT_VERSION ) { readbytes = -1; of->errcode=FLT_ERR_VERSION; }
   return readbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
-flt_i32 flt_func_pal_tex(flt_op* oh, flt* of, flt_opts* opts)
+FLT_RECORD_READER(flt_reader_pal_tex)
+////////////////////////////////////////////////////////////////////////////////////////////////
 {
   flt_end_desc desc[]={
     {32, 3, flt_offsetto(patt_ndx,flt_pal_tex)},
@@ -452,6 +466,14 @@ flt_i32 flt_func_pal_tex(flt_op* oh, flt* of, flt_opts* opts)
   return readbytes;
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_release(flt* of)
+{
+  flt_pal_tex* pt, *pn;
+
+  flt_safefree(of->header);
+  pt=pn=of->pal_tex; while (pt){ pn=pt->next; flt_free(pt); pt=pn; } // palette texture list
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void flt_swap_desc(void* data, flt_end_desc* desc)
@@ -474,15 +496,6 @@ void flt_swap_desc(void* data, flt_end_desc* desc)
     }
     desc++;
   }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-void flt_release(flt* of)
-{
-  flt_pal_tex* pt, *pn;
-
-  flt_safefree(of->header);
-  pt=pn=of->pal_tex; while (pt){ pn=pt->next; flt_free(pt); pt=pn; } // palette texture list
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
