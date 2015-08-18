@@ -15,7 +15,7 @@ library    | lastest version | category | description
 Set of applications and small tools making use of these libraries.
 ### flt2dds
 A single-cpp file C++11 tool to convert all imagery data from Openflight graph into DDS. <br/>
-See <a href="utils/flt2dds/readme.md">flt2dds readme</a> for more information.
+See <a href="https://github.com/gyakoo/simutils/tree/master/utils/flt2dds">flt2dds readme</a> for more information.
 
 ### fltviewer
 Small OpenGL FLT viewer.
