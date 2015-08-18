@@ -16,13 +16,13 @@ solution "fltview"
 			 links { "gdi32", "winmm", "user32" }
 		
 		configuration "Debug"
-            targetdir "./bin/debug/"
-            objdir "./build/debug/"
+      targetdir "./build/bin/debug/"
+      objdir "./build/bin/debug/"
 			defines { "DEBUG", "_DEBUG" }
 			flags { "Symbols", "ExtraWarnings"}
 
 		configuration "Release"
-            targetdir "./bin/release/"
-            objdir "./bin/release/"
+      targetdir "./build/bin/release/"
+      objdir "./build/bin/release/"
 			defines { "NDEBUG" }
 			flags { "Optimize", "ExtraWarnings"}    
