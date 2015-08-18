@@ -100,10 +100,13 @@ extern "C" {
   const char* flt_get_err_reason(int errcode);
 
     // Encodes a vertex stream semantic word with the semantic and the offset
-  fltu16 flt_vtx_stream_enc(fltu8 semantic, fltu8 size, fltu8 offset);
+  fltu16 flt_vtx_stream_enc(fltu8 semantic, fltu8 offset, fltu8 size);
 
     // Decodes a vertex stream semantic word
-  void flt_vtx_stream_dec(fltu16 sem, int* semantic, int* size, int* offset);
+  void flt_vtx_stream_dec(fltu16 stream, fltu8* semantic, fltu8* offset, fltu8* size);
+
+    // Computes the size of a vertex stream in bytes
+  int flt_vtx_size(fltu16* vstr)
 
 #ifdef __cplusplus
 };
@@ -183,35 +186,6 @@ typedef struct flt_pal_tex
   flti32 xy_loc[2];
   flt_pal_tex* next;
 }flt_pal_tex;
-
-typedef struct flt_vertex_C // COLOR
-{
-  double coords[3];
-  fltu32 abgr;
-}flt_vertex_C;
-
-typedef struct flt_vertex_CN // COLOR, NORMAL
-{
-  double coords[3];
-  float normal[3];
-  fltu32 abgr;
-}flt_vertex_CN;
-
-typedef struct flt_vertex_CT // COLOR, UV
-{
-  double coords[3];
-  float uv[2];
-  fltu32 abgr;
-}flt_vertex_CT;
-
-typedef struct flt_vertex_CNT // COLOR, NORMAL, UV
-{
-  double coords[3];
-  float normal[3];
-  float uv[2];
-  fltu32 abgr;
-}flt_vertex_CNT;
-
 
 #pragma pack (pop)
 
@@ -355,9 +329,11 @@ bool flt_read_ophead(fltu16 op, flt_op* data, FILE* f);
 void flt_swap_desc(void* data, flt_end_desc* desc);
 const char* flt_get_op_name(fltu16 opcode);
 int flt_vtx_size(fltu16* vstr);
-void flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr, float* normal, float* uv);
+fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr, float* normal, float* uv);
 void flt_vtx_write_PC(flt* of, double* xyz, fltu32 abgr);
 void flt_vtx_write_PCN(flt* of, double* xyz, fltu32 abgr, float* normal);
+void flt_vtx_write_PCT(flt* of, double* xyz, fltu32 abgr, float* uv);
+void flt_vtx_write_PCNT(flt* of, double* xyz, fltu32 abgr, float* uv, float* normal);
 
 FLT_RECORD_READER(flt_reader_header);                 // FLT_OP_HEADER
 FLT_RECORD_READER(flt_reader_pal_tex);                // FLT_OP_PAL_TEXTURE
@@ -533,7 +509,7 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
     {
       fltint->opts->flags |= FLT_OPT_VTX_FORMATSOURCE;
       // allocates for the biggest format size to be sure we have enough memory
-      of->pal_vtx = (fltu8*)malloc( vmaxcount * sizeof(flt_vertex_CNT) ); 
+      of->pal_vtx = (fltu8*)malloc( vmaxcount * 48 ); 
       // array of offsets. for the format of vertex i, it is the format to the associated vertex size (offset_next - offset)
       of->pal_vtx_offsets = (flti32*)malloc( vmaxcount * sizeof(flti32) );
     }
@@ -564,7 +540,7 @@ FLT_RECORD_READER(flt_reader_vtx_color)
   coords=(double*)(data+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   abgr=(flti32*)(data+28); flt_swap32(abgr);
 
-  // write position+color and advances count and offset
+  // write  and advances count and offset
   flt_vtx_write_PC(of, coords, *abgr );
 
   return readbytes;
@@ -587,7 +563,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal)
   normal=(float*)(data+28); flt_swap32(normal); flt_swap32(normal+1); flt_swap32(normal+2);
   abgr=(flti32*)(data+40); flt_swap32(abgr);
 
-  // write position+color and advances count and offset
+  // write  and advances count and offset
   flt_vtx_write_PCN(of, coords, *abgr, normal);
 
   return readbytes;
@@ -599,6 +575,20 @@ FLT_RECORD_READER(flt_reader_vtx_color_uv)
 {
   flt_internal* fltint=(flt_internal*)of->reserved;
   int readbytes=oh->length-sizeof(flt_op);
+  char data[40];
+  double* coords;
+  float* uv;
+  flti32* abgr;
+
+  // read data in
+  readbytes -= fread(data,1,40,fltint->f);
+  coords=(double*)(data+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
+  uv=(float*)(data+28); flt_swap32(uv); flt_swap32(uv+1);
+  abgr=(flti32*)(data+36); flt_swap32(abgr);
+
+  // write  and advances count and offset
+  flt_vtx_write_PCT(of, coords, *abgr, uv);
+
   return readbytes;
 }
 
@@ -608,6 +598,22 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal_uv)
 {
   flt_internal* fltint=(flt_internal*)of->reserved;
   int readbytes=oh->length-sizeof(flt_op);
+  char data[60];
+  double* coords;
+  float* uv;
+  float* normal;
+  flti32* abgr;
+
+  // read data in
+  readbytes -= fread(data,1,60,fltint->f);
+  coords=(double*)(data+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
+  normal=(float*)(data+28); flt_swap32(normal); flt_swap32(normal+1); flt_swap32(normal+2);
+  uv=(float*)(data+40); flt_swap32(uv); flt_swap32(uv+1);
+  abgr=(flti32*)(data+48); flt_swap32(abgr);
+
+  // write  and advances count and offset
+  flt_vtx_write_PCNT(of, coords, *abgr, uv, normal);
+
   return readbytes;
 }
 
@@ -631,77 +637,67 @@ void flt_release(flt* of)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-void flt_vtx_write_PC(flt* of, double* xyz, fltu32 abgr)
+static float flt_defaultuv[2]={0};
+static float flt_defaultnormal[3]={0};
+void flt_vtx_write(flt* of, fltu16* stream, double* xyz, fltu32 abgr, float* uv, float* normal)
 {
-  flt_internal* fltint=(flt_internal*)of->reserved;
-  fltu32 advanceBytes;
+  flt_internal* fltint=(flt_internal*)of->reserved;  
   fltu8* vertex;
-  flt_vertex_C* vc;
-  float defnormal[3]={0};
-  float defuv[2]={0};
 
+  if ( !stream ) stream = fltint->opts->vtxstream;
   // offset to current vertex
   vertex = of->pal_vtx + fltint->vtx_offset;
 
-  // which target vertex format?
+  // if format source used, update array and use the source stream
+  // use source. gets offset to next vertex, saves pos+color, advance offset accordingly
   if ( fltint->opts->flags & FLT_OPT_VTX_FORMATSOURCE )
-  {
-    // use source. gets offset to next vertex, saves pos+color, advance offset accordingly
     of->pal_vtx_offsets[of->pal_vtx_count] = fltint->vtx_offset;
-    vc = (flt_vertex_C*)vertex;
-    vc->coords[0]=xyz[0]; vc->coords[1]=xyz[1]; vc->coords[2]=xyz[2];
-    vc->abgr = abgr;
-    advanceBytes = sizeof(flt_vertex_C);
-  }
-  else
-  {
-    // force format. write POS+COLOR and default values for rest of them.
-    flt_vtx_write_sem(vertex, fltint->opts->vtxstream, xyz, abgr, defnormal, defuv);
-    advanceBytes = -(int)of->pal_vtx_offsets; // increases fixed vertex size
-  }
 
-  // next vertex
-  fltint->vtx_offset += advanceBytes;  
+  fltint->vtx_offset += flt_vtx_write_sem(vertex, stream, xyz, abgr, normal, uv);   
   ++of->pal_vtx_count;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-void flt_vtx_write_PCN(flt* of, double* xyz, fltu32 abgr, float* normal)
+void flt_vtx_write_PC(flt* of, double* xyz, fltu32 abgr)
 {
-  flt_internal* fltint=(flt_internal*)of->reserved;
-  fltu32 advanceBytes,i;
-  fltu8* vertex;
-  flt_vertex_CN* vcn;
-  float defuv[2]={0};
+  flt_internal* fltint=(flt_internal*)of->reserved;  
+  static fltu16 srcstream[]={ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), 0};
+  fltu16* stream=0;
+  if ( fltint->opts->flags & FLT_OPT_VTX_FORMATSOURCE ) stream = srcstream;
+  flt_vtx_write(of,stream,xyz,abgr,flt_defaultuv, flt_defaultnormal);
+}
 
-  // offset to current vertex
-  vertex = of->pal_vtx + fltint->vtx_offset;
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_vtx_write_PCN(flt* of, double* xyz, fltu32 abgr, float* normal)
+{ 
+  flt_internal* fltint=(flt_internal*)of->reserved;  
+  static fltu16 srcstream[]={ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), flt_vtx_stream_enc(FLT_VTX_NORMAL,28,12), 0};
+  fltu16* stream=0;
+  if ( fltint->opts->flags & FLT_OPT_VTX_FORMATSOURCE ) stream = srcstream;
+  flt_vtx_write(of,stream,xyz,abgr,flt_defaultuv,normal);
+}
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_vtx_write_PCT(flt* of, double* xyz, fltu32 abgr, float* uv)
+{
+  flt_internal* fltint=(flt_internal*)of->reserved;  
+  static fltu16 srcstream[]={ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), flt_vtx_stream_enc(FLT_VTX_UV0,28,8), 0};
+  fltu16* stream=0;
+  if ( fltint->opts->flags & FLT_OPT_VTX_FORMATSOURCE ) stream = srcstream;
+  flt_vtx_write(of,stream,xyz,abgr,uv,flt_defaultnormal);
+}
 
-  // which target vertex format?
-  if ( fltint->opts->flags & FLT_OPT_VTX_FORMATSOURCE )
-  {
-    // use source. gets offset to next vertex, saves pos+color, advance offset accordingly
-    of->pal_vtx_offsets[of->pal_vtx_count] = fltint->vtx_offset;
-    vcn = (flt_vertex_CN*)vertex;
-    for (i=0;i<3;++i)
-    {
-      vcn->coords[i]=xyz[i]; 
-      vcn->normal[i]=normal[i];
-    }
-    vcn->abgr = abgr;
-    advanceBytes = sizeof(flt_vertex_CN);
-  }
-  else
-  {
-    // force format. write POS+COLOR and default values for rest of them.
-    flt_vtx_write_sem(vertex, fltint->opts->vtxstream, xyz, abgr, normal, defuv );
-    advanceBytes = -(int)of->pal_vtx_offsets; // increases fixed vertex size
-  }
-
-  // next vertex
-  fltint->vtx_offset += advanceBytes;  
-  ++of->pal_vtx_count;
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_vtx_write_PCNT(flt* of, double* xyz, fltu32 abgr, float* uv, float* normal)
+{
+  flt_internal* fltint=(flt_internal*)of->reserved;  
+  static fltu16 srcstream[]={ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), flt_vtx_stream_enc(FLT_VTX_NORMAL,28,12), flt_vtx_stream_enc(FLT_VTX_UV0,40,8), 0};
+  fltu16* stream=0;
+  if ( fltint->opts->flags & FLT_OPT_VTX_FORMATSOURCE ) stream = srcstream;
+  flt_vtx_write(of,stream,xyz,abgr,uv,normal);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -907,12 +903,12 @@ const char* flt_get_err_reason(int errcode)
 // Encodes/decodes a vertex stream semantic word with the semantic, size and offset
 // 4 msb for semantic, and 6 bits for size and 6 for offset
 ////////////////////////////////////////////////////////////////////////////////////////////////
-fltu16 flt_vtx_stream_enc(fltu8 semantic, fltu8 size, fltu8 offset)
+fltu16 flt_vtx_stream_enc(fltu8 semantic, fltu8 offset, fltu8 size)
 {
   return (fltu16)( (fltu16)(semantic<<12) | (fltu16)((size<<6)&0x0fc0) | (fltu16)(offset&0x003f) );
 }
 
-void flt_vtx_stream_dec(fltu16 sem, fltu8* semantic, fltu8* size, fltu8* offset)
+void flt_vtx_stream_dec(fltu16 sem, fltu8* semantic, fltu8* offset, fltu8* size)
 {
   *semantic = (fltu8)(sem>>12);
   *size = (fltu8)( (sem&0x0fc0)>>6 );
@@ -930,25 +926,25 @@ int flt_vtx_size(fltu16* vstr)
   if ( !vstr ) return 0;
   while (*vstr)
   {
-    flt_vtx_stream_dec(*vstr,&sem,&size,&offs);
+    flt_vtx_stream_dec(*vstr,&sem,&offs,&size);
     totalsize+=size;
     ++vstr;
   }
   return totalsize;
 }
 
-void flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr, float* normal, float* uv)
+fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr, float* normal, float* uv)
 {
+  fltu32 tsize=0;
   fltu8 tgt_sem,offs,size;
   float* floats;
   int i;
-  if ( !vstream) return;
 
   while (*vstream)
   {
     // this semantic
-    flt_vtx_stream_dec(*vstream,&tgt_sem,&size,&offs);
-
+    flt_vtx_stream_dec(*vstream,&tgt_sem,&offs,&size);
+    tsize+=size;
     switch(tgt_sem)
     {
     case FLT_VTX_POSITION: // support for float/double positions
@@ -966,6 +962,7 @@ void flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr
     }
     ++vstream;
   }
+  return tsize;
 }
 
 
