@@ -59,105 +59,45 @@ Version check
 #ifdef __cplusplus
 extern "C" {
 #endif
+  typedef unsigned char  flt_u8;
+  typedef unsigned short flt_u16;
+  typedef unsigned int   flt_u32;
+  typedef char  flt_i8;
+  typedef short flt_i16;
+  typedef int   flt_i32;
+
+  struct flt_header;
+  struct flt_pal_tex;
 
   typedef struct flt_opts
   {
+    flt_u32 flags;      
+    flt_u32 palflags;         // palette flags (see FLT_OPT_PAL_*)
   }flt_opts;
 
   typedef struct flt
   {
+    flt_header* header;
+    flt_pal_tex* pal_tex;
+    flt_u32 pal_tex_count;
     int errcode;
+    void* reserved;
   }flt;
 
     // Load openflight information into of with given options
   bool flt_load_from_filename(const char* filename, flt* of, flt_opts* opts);
 
+    // Deallocates all memory
+  void flt_release(flt* of);
+
     // Returns reason of the error code. Define FLT_LONG_ERR_MESSAGES for longer texts.
   const char* flt_get_err_reason(int errcode);
-
-
 
 #ifdef __cplusplus
 };
 
-// FLT Opcodes
-#define FLT_OP_DONTCARE 0
-#define FLT_OP_HEADER 1
-#define FLT_OP_MAX 154
-
-#endif
-
-#ifdef FLT_IMPLEMENTATION
-#if defined(flt_malloc) && defined(flt_free)
-// ok
-#elif !defined(flt_malloc) && !defined(flt_free)
-// ok
-#else
-#error "Must define all or none of flt_malloc, flt_free"
-#endif
-
-#ifndef flt_malloc
-#define flt_malloc(sz) malloc(sz)
-#endif
-
-#ifndef flt_free
-#define flt_free(p) free(p)
-#endif
-
-#if defined(WIN32) || defined(_WIN32) || (defined(sgi) && defined(unix) && defined(_MIPSEL)) || (defined(sun) && defined(unix) && !defined(_BIG_ENDIAN)) || (defined(__BYTE_ORDER) && (__BYTE_ORDER == __LITTLE_ENDIAN)) || (defined(__APPLE__) && defined(__LITTLE_ENDIAN__)) || (defined( _PowerMAXOS ) && (BYTE_ORDER == LITTLE_ENDIAN ))
-#define FLT_LITTLE_ENDIAN
-#elif (defined(sgi) && defined(unix) && defined(_MIPSEB)) || (defined(sun) && defined(unix) && defined(_BIG_ENDIAN)) || defined(vxw) || (defined(__BYTE_ORDER) && (__BYTE_ORDER == __BIG_ENDIAN)) || ( defined(__APPLE__) && defined(__BIG_ENDIAN__)) || (defined( _PowerMAXOS ) && (BYTE_ORDER == BIG_ENDIAN) )
-#define FLT_BIG_ENDIAN
-#else
-#  error unknown endian type
-#endif
-
-typedef unsigned char  flt_u8;
-typedef unsigned short flt_u16;
-typedef unsigned int   flt_u32;
-typedef char  flt_i8;
-typedef short flt_i16;
-typedef int   flt_i32;
-
-#ifdef FLT_LITTLE_ENDIAN
-void flt_swap16(void* d)
-{ 
-  unsigned char* b=(unsigned char*)d;
-  const unsigned char t = b[0];
-  b[0]=b[1]; b[1]=t;
-}
-
-void flt_swap32(void* d)
-{ 
-  unsigned char* b=(unsigned char*)d;
-  const unsigned char t0 = b[0], t1 = b[1];
-  b[0]=b[3]; b[1]=b[2];
-  b[3]=t0;   b[2]=t1;
-}
-
-void flt_swap64(void* d)
-{
-  unsigned char* b=(unsigned char*)d;
-  const unsigned char t0=b[0], t1=b[1], t2=b[2], t3=b[3];
-  b[0]=b[7]; b[1]=b[7]; b[2]=b[5]; b[3]=b[4];
-  b[7]=t0;   b[6]=t1;   b[5]=t2;   b[4]=t3;
-}
-#else
-# define flt_swap16(d)
-# define flt_swap32(d)
-# define flt_swap64(d)
-#endif
-
-#define flt_offsetto(n,t)  ((int)( (unsigned char*)&((t*)(0))->n - (unsigned char*)(0) ))
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-typedef struct flt_end_desc
-{
-  flt_i8 bits;
-  flt_i8 count;
-  flt_u16 offs;
-}flt_end_desc;
-
 #pragma pack(push,1)
 typedef struct flt_op
 { 
@@ -223,97 +163,232 @@ typedef struct flt_header
   double    earth_major_axis;
   double    earth_minor_axis;
 }flt_header;
+
+typedef struct flt_pal_tex
+{
+  char name[200];
+  flt_i32 patt_ndx;
+  flt_i32 xy_loc[2];
+  flt_pal_tex* next;
+}flt_pal_tex;
+
 #pragma pack (pop)
 
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-bool flt_err(int err, flt* of, FILE* f);
-bool flt_oph(flt_u16 op, flt_op* data, FILE* f);
-bool flt_opcode(flt_u16 op, void* data, FILE* f);
-void flt_swap_desc(void* data, flt_end_desc* desc);
-void flt_swap_rec(void* data, flt_u16 op);
-void flt_swap_op_header(void* data);
-const char* flt_get_op_name(flt_u16 opcode);
+// FLT Options
+// flags
+#define FLT_OPT_HEADER            (1<<00) // read header
+
+// palettes
+#define FLT_OPT_PAL_NAMETABLE     (1<<00) // name table record
+#define FLT_OPT_PAL_COLOR         (1<<01) // color 
+#define FLT_OPT_PAL_MATERIAL      (1<<02) // material
+#define FLT_OPT_PAL_MATERIALEXT   (1<<03) // extended material
+#define FLT_OPT_PAL_TEXTURE       (1<<04) // texture
+#define FLT_OPT_PAL_TEXTUREMAPP   (1<<05) // texture mapping
+#define FLT_OPT_PAL_SOUND         (1<<06) // sound
+#define FLT_OPT_PAL_LIGHTSRC      (1<<07) // light source
+#define FLT_OPT_PAL_LIGHTPNT      (1<<08) // light point
+#define FLT_OPT_PAL_LIGHTPNTANIM  (1<<09) // light point animation
+#define FLT_OPT_PAL_LINESTYLE     (1<<10) // line style
+#define FLT_OPT_PAL_SHADER        (1<<11) // shader
+#define FLT_OPT_PAL_EYEPNT_TCKPLN (1<<12) // eyepoint and trackplane
+#define FLT_OPT_PAL_LINKAGE       (1<<13) // linkage
+#define FLT_OPT_PAL_EXTGUID       (1<<14) // extension GUID
+ 
+// FLT Opcodes
+#define FLT_OP_DONTCARE 0
+#define FLT_OP_HEADER 1
+#define FLT_OP_PUSHLEVEL 10
+#define FLT_OP_POPLEVEL 11
+#define FLT_OP_PUSHSUBFACE 19
+#define FLT_OP_POPSUBFACE 20
+#define FLT_OP_PUSHEXTENSION 21
+#define FLT_OP_POPEXTENSION 22
+#define FLT_OP_COMMENT 31
+#define FLT_OP_LONGID 33
+#define FLT_OP_PAL_TEXTURE 64
+#define FLT_OP_PAL_VERTEX 67
+#define FLT_OP_MAX 154
+
+#endif // cplusplus
+
+#ifdef FLT_IMPLEMENTATION
+#if defined(flt_malloc) && defined(flt_free)
+// ok
+#elif !defined(flt_malloc) && !defined(flt_free)
+// ok
+#else
+#error "Must define all or none of flt_malloc, flt_free"
+#endif
+
+#ifndef flt_malloc
+#define flt_malloc(sz) malloc(sz)
+#endif
+
+#ifndef flt_free
+#define flt_free(p) free(p)
+#endif
+
+#define flt_safefree(p) { if (p){ flt_free(p); (p)=0;} }
+
+#if defined(WIN32) || defined(_WIN32) || (defined(sgi) && defined(unix) && defined(_MIPSEL)) || (defined(sun) && defined(unix) && !defined(_BIG_ENDIAN)) || (defined(__BYTE_ORDER) && (__BYTE_ORDER == __LITTLE_ENDIAN)) || (defined(__APPLE__) && defined(__LITTLE_ENDIAN__)) || (defined( _PowerMAXOS ) && (BYTE_ORDER == LITTLE_ENDIAN ))
+#define FLT_LITTLE_ENDIAN
+#elif (defined(sgi) && defined(unix) && defined(_MIPSEB)) || (defined(sun) && defined(unix) && defined(_BIG_ENDIAN)) || defined(vxw) || (defined(__BYTE_ORDER) && (__BYTE_ORDER == __BIG_ENDIAN)) || ( defined(__APPLE__) && defined(__BIG_ENDIAN__)) || (defined( _PowerMAXOS ) && (BYTE_ORDER == BIG_ENDIAN) )
+#define FLT_BIG_ENDIAN
+#else
+#  error unknown endian type
+#endif
+
+#ifdef FLT_LITTLE_ENDIAN
+void flt_swap16(void* d)
+{ 
+  unsigned char* b=(unsigned char*)d;
+  const unsigned char t = b[0];
+  b[0]=b[1]; b[1]=t;
+}
+
+void flt_swap32(void* d)
+{ 
+  unsigned char* b=(unsigned char*)d;
+  const unsigned char t0 = b[0], t1 = b[1];
+  b[0]=b[3]; b[1]=b[2];
+  b[3]=t0;   b[2]=t1;
+}
+
+void flt_swap64(void* d)
+{
+  unsigned char* b=(unsigned char*)d;
+  const unsigned char t0=b[0], t1=b[1], t2=b[2], t3=b[3];
+  b[0]=b[7]; b[1]=b[7]; b[2]=b[5]; b[3]=b[4];
+  b[7]=t0;   b[6]=t1;   b[5]=t2;   b[4]=t3;
+}
+#else
+# define flt_swap16(d)
+# define flt_swap32(d)
+# define flt_swap64(d)
+#endif
+
+#define flt_offsetto(n,t)  ((int)( (unsigned char*)&((t*)(0))->n - (unsigned char*)(0) ))
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
-bool flt_err(int err, flt* of, FILE* f)
+////////////////////////////////////////////////////////////////////////////////////////////////
+typedef flt_i32 (*opfunc)(flt_op* oh, flt* of, flt_opts* opts);
+typedef struct flt_end_desc
 {
+  flt_i8 bits;
+  flt_i8 count;
+  flt_u16 offs;
+}flt_end_desc;
+
+typedef struct flt_internal
+{
+  FILE* f;
+  flt_pal_tex* pal_tex_last;
+}flt_internal;
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+bool flt_err(int err, flt* of);
+bool flt_read_ophead(flt_u16 op, flt_op* data, FILE* f);
+void flt_swap_desc(void* data, flt_end_desc* desc);
+const char* flt_get_op_name(flt_u16 opcode);
+
+flt_i32 flt_func_header(flt_op*, flt*, flt_opts*);   // FLT_OP_HEADER
+flt_i32 flt_func_pal_tex(flt_op*, flt*, flt_opts*);  // FLT_OP_PAL_TEXTURE
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+bool flt_err(int err, flt* of)
+{
+  flt_internal* fltint = (flt_internal*)of->reserved;
   of->errcode = err;
-  if ( f )
-    fclose(f);
+  if ( fltint->f ) { fclose(fltint->f); fltint->f=0; }  
+  if ( err != FLT_OK ) flt_release(of);
   return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
-const char* flt_get_err_reason(int errcode)
-{
-#ifdef FLT_LONG_ERR_MESSAGES
-  switch ( errcode )
-  {
-  case FLT_OK         : return "Ok"; 
-  case FLT_ERR_FOPEN  : return "IO Error opening/reading file or not found"; 
-  }
-#else
-  switch ( errcode )
-  {
-  case FLT_OK         : return "Ok"; 
-  case FLT_ERR_FOPEN  : return "File error"; 
-  }
-#endif
-  return "Unknown";
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-bool flt_oph(flt_u16 op, flt_op* data, FILE* f)
+bool flt_read_ophead(flt_u16 op, flt_op* data, FILE* f)
 {
   if ( fread(data,1,sizeof(flt_op),f) != sizeof(flt_op) )
     return false;
   flt_swap16(&data->op); flt_swap16(&data->length);
-  return ( data->op == op );
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-bool flt_opcode(flt_u16 op, void* data, FILE* f)
-{
-  flt_op oh;
-  flt_u16 len;
-
-  if  (!flt_oph(op,&oh,f) ) return false;
-  len = oh.length>sizeof(flt_op)?oh.length-sizeof(flt_op):0;
-  if ( fread(data, 1, len, f) != len) return false;
-  flt_swap_rec(data,op);
-  return true;
+  return op==FLT_OP_DONTCARE || data->op == op;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 bool flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 {
-  FILE* f;
-  flt_header h;
   flt_op oh;
-  flt_u16 leftLength;
+  int skipbytes;  
+  opfunc optable[FLT_OP_MAX]={0};
+  flt_internal fltint={0};
 
-  // opening file and reading header for version check
-  f = fopen(filename, "rb");
-  if ( !f ) return flt_err(FLT_ERR_FOPEN, of, f);
-  if ( !flt_opcode(FLT_OP_HEADER, &h, f) )  return flt_err(FLT_ERR_OPREAD, of, f);
-  if ( h.format_rev > FLT_VERSION )         return flt_err(FLT_ERR_VERSION, of, f);
+  // opening file
+  fltint.f = fopen(filename, "rb");
+  if ( !fltint.f ) return flt_err(FLT_ERR_FOPEN, of);
 
+  // preparing internal
+  of->reserved = &fltint;
 
-  while ( !feof(f) )
+  // configuring readers
+  optable[FLT_OP_HEADER] = flt_func_header; // always read header
+  if ( opts->palflags & FLT_OPT_PAL_TEXTURE ) optable[FLT_OP_PAL_TEXTURE] = flt_func_pal_tex;
+
+  // reading loop
+  while ( flt_read_ophead(FLT_OP_DONTCARE, &oh, fltint.f) )
   {
-    flt_oph(FLT_OP_DONTCARE, &oh,f);     
-    leftLength = oh.length>sizeof(flt_op) ? oh.length - sizeof(flt_op) : 0;
-    if ( oh.op != 68 && oh.op != 69 && oh.op!=70 )
-      printf( "(%d) %s\n", oh.op, flt_get_op_name(oh.op));
-    fseek(f,leftLength,SEEK_CUR);
+    // if reader function available, use it
+    if ( optable[oh.op] )
+      skipbytes = optable[oh.op](&oh, of, opts);
+    else
+      skipbytes = oh.length-sizeof(flt_op);
+    
+    // if returned negative, it's an error
+    if ( skipbytes < 0 ) 
+      return flt_err(of->errcode,of);
+
+    // DEBUG - PRINTING
+//     {
+//       ++histogram[oh.op];
+//       for (i=0;i<level;++i) printf("\t");
+//       str[0]=0;
+//       switch (oh.op)
+//       {
+//       case FLT_OP_LONGID:
+//       case FLT_OP_COMMENT: 
+//         skipbytes-=fread(str,1,skipbytes,f); 
+//         for (i=0;i<512 && str[i];++i) if (str[i]=='\n') str[i]=' ';
+//         break;
+//       case FLT_OP_PUSHEXTENSION:
+//       case FLT_OP_PUSHLEVEL: 
+//       case FLT_OP_PUSHSUBFACE: ++level; break; 
+//       case FLT_OP_POPEXTENSION:
+//       case FLT_OP_POPLEVEL: 
+//       case FLT_OP_POPSUBFACE: --level; break;    
+//       case FLT_OP_VERTEXPALETTE: 
+//         fread(&i,4,1,f);
+//         flt_swap32(&i);
+//         fseek(f,i-8,SEEK_CUR);
+//         skipbytes = 0;
+//         break;
+//       }
+//       printf( "(%d) %s %s\n", oh.op, flt_get_op_name(oh.op), str);
+//     }
+    if ( skipbytes>0 ) fseek(fltint.f,skipbytes,SEEK_CUR);
   }
 
-  return flt_err(FLT_OK,of,f);
+//   printf( "\n\nStats:\n" );
+//   for (i=0;i<FLT_OP_MAX;++i)
+//   {
+//     if ( !histogram[i] ) continue;
+//     printf( "(%d) %s = %d\n", i, flt_get_op_name(i), histogram[i] );
+//   }
+
+  return flt_err(FLT_OK,of);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
-void flt_swap_op_header(void* data)
+flt_i32 flt_func_header(flt_op* oh, flt* of, flt_opts* opts)
 {
   flt_end_desc  desc[]={ 
     {32, 2, flt_offsetto(format_rev,flt_header)},
@@ -333,17 +408,52 @@ void flt_swap_op_header(void* data)
     {64, 2, flt_offsetto(earth_major_axis,flt_header)},
     {NULL,NULL,NULL}
   };
-  flt_swap_desc(data,desc);
+  flt_header _header;
+  flt_header* header=&_header;
+  flt_internal* fltint=(flt_internal*)of->reserved;
+  int readbytes=oh->length-sizeof(flt_op);
+
+  // if storing header...
+  if ( opts->flags & FLT_OPT_HEADER ) 
+    of->header = header = (flt_header*)malloc(sizeof(flt_header));
+
+  // read header and swap for endianess
+  readbytes -= fread(header, 1, readbytes, fltint->f);  
+  flt_swap_desc(header,desc);
+
+  // checking version
+  if ( header->format_rev > FLT_VERSION ) readbytes = -1;
+
+  return readbytes;
 }
 
-void flt_swap_rec(void* data, flt_u16 op)
+////////////////////////////////////////////////////////////////////////////////////////////////
+flt_i32 flt_func_pal_tex(flt_op* oh, flt* of, flt_opts* opts)
 {
-  switch (op)
-  {
-    case FLT_OP_HEADER: flt_swap_op_header(data); break;
-    break;
-  }
+  flt_end_desc desc[]={
+    {32, 3, flt_offsetto(patt_ndx,flt_pal_tex)},
+    {NULL,NULL,NULL}
+  };
+
+  flt_internal* fltint = (flt_internal*)of->reserved;
+  flt_pal_tex* newpt = (flt_pal_tex*)malloc(sizeof(flt_pal_tex));
+  if ( fltint->pal_tex_last )
+    fltint->pal_tex_last->next = newpt;
+  else
+    of->pal_tex = newpt;
+
+  int readbytes = oh->length-sizeof(flt_op);
+  readbytes -= fread(newpt, 1, readbytes, fltint->f);
+  flt_swap_desc(newpt, desc);
+  newpt->next = 0;
+
+  fltint->pal_tex_last = newpt;
+  ++of->pal_tex_count;
+  return readbytes;
 }
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
 void flt_swap_desc(void* data, flt_end_desc* desc)
 {
   unsigned char* _data = (unsigned char*)data;
@@ -364,8 +474,18 @@ void flt_swap_desc(void* data, flt_end_desc* desc)
     }
     desc++;
   }
-};
+}
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_release(flt* of)
+{
+  flt_pal_tex* pt, *pn;
+
+  flt_safefree(of->header);
+  pt=pn=of->pal_tex; while (pt){ pn=pt->next; flt_free(pt); pt=pn; } // palette texture list
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
 const char* flt_get_op_name(flt_u16 opcode)
 {
 #ifndef FLT_NO_OPNAMES
@@ -515,6 +635,27 @@ const char* flt_get_op_name(flt_u16 opcode)
 #else
 return "";
 #endif
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+const char* flt_get_err_reason(int errcode)
+{
+#ifdef FLT_LONG_ERR_MESSAGES
+  switch ( errcode )
+  {
+  case FLT_OK         : return "Ok"; 
+  case FLT_ERR_FOPEN  : return "IO Error opening/reading file or not found"; 
+  case FLT_ERR_VERSION: return "Version error. Max. supported version FLT_GREATER_SUPPORTED_VERSION";
+  }
+#else
+  switch ( errcode )
+  {
+  case FLT_OK         : return "Ok"; 
+  case FLT_ERR_FOPEN  : return "File error"; 
+  case FLT_ERR_VERSION: return "Version unsupported";
+  }
+#endif
+  return "Unknown";
 }
 
 #endif
