@@ -67,6 +67,7 @@ Version check
 #define FLT_ERR_OPREAD 2
 #define FLT_ERR_VERSION 3
 #define FLT_ERR_MEMOUT 4
+#define FLT_ERR_READBEYOND_REC 5
 
 #define FLT_GREATER_SUPPORTED_VERSION 1640
 #ifndef FLT_VERSION
@@ -437,6 +438,8 @@ FILE* flt_fopen(const char* filename, flt* of);
 char* flt_path_base(const char* filaname);
 char* flt_path_basefile(const char* filename);
 int flt_path_endsok(const char* filename);
+#define flt_min(a,b) ((a)<(b)?(a):(b))
+#define flt_max(a,b) ((a)>(b)?(a):(b))
 
 FLT_RECORD_READER(flt_reader_header);                 // FLT_OP_HEADER
 FLT_RECORD_READER(flt_reader_pal_tex);                // FLT_OP_PAL_TEXTURE
@@ -530,7 +533,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
     skipbytes = optable[oh.op] ? optable[oh.op](&oh, of) : oh.length-sizeof(flt_op);
     
     // if returned negative, it's an error, if positive, we skip until next record
-    if ( skipbytes < 0 )        return flt_err(of->errcode,of);
+    if ( skipbytes < 0 )        return flt_err(FLT_ERR_READBEYOND_REC,of);
     else if ( skipbytes > 0 )   fseek(fltint.f,skipbytes,SEEK_CUR); 
   }
 
@@ -568,7 +571,7 @@ FLT_RECORD_READER(flt_reader_header)
     // if storing header, read it entirely
     of->header = (flt_header*)flt_malloc(sizeof(flt_header));
     flt_mem_check(of->header, of->errcode);
-    readbytes -= fread(of->header, 1, readbytes, fltint->f);  
+    readbytes -= fread(of->header, 1, flt_min(readbytes,sizeof(flt_header)), fltint->f);  
     flt_swap_desc(of->header,desc); // endianess
     format_rev = of->header->format_rev;
   }
@@ -599,7 +602,7 @@ FLT_RECORD_READER(flt_reader_pal_tex)
   flt_mem_check(newpt, of->errcode);
 
   readbytes = oh->length-sizeof(flt_op);
-  readbytes -= fread(newpt, 1, readbytes, fltint->f);
+  readbytes -= fread(newpt, 1, flt_min(readbytes,sizeof(flt_pal_tex)), fltint->f);
   flt_swap_desc(newpt, desc);
   if ( fltint->opts->cb_texture ) 
     fltint->opts->cb_texture(newpt,of,fltint->opts->cb_user_data); // callback?
@@ -619,6 +622,7 @@ FLT_RECORD_READER(flt_reader_pal_tex)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_extref)
 {
+  char* basefile;
   flt_end_desc desc[]={
     {32, 1, flt_offsetto(flags,flt_node_extref)},
     {16, 1, flt_offsetto(view_asbb,flt_node_extref)},
@@ -630,7 +634,7 @@ FLT_RECORD_READER(flt_reader_extref)
   flt_mem_check(newextref, of->errcode);
 
   readbytes = oh->length-sizeof(flt_op);
-  readbytes -= fread(newextref, 1, readbytes, fltint->f);
+  readbytes -= fread(newextref, 1, flt_min(readbytes,sizeof(flt_node_extref)), fltint->f);
   flt_swap_desc(newextref, desc);
   if ( fltint->opts->cb_extref ) 
     fltint->opts->cb_extref(newextref, of, fltint->opts->cb_user_data); // callback?
@@ -643,8 +647,24 @@ FLT_RECORD_READER(flt_reader_extref)
   {
     newextref->of = (flt*)flt_malloc(sizeof(flt));
     flt_mem_check(newextref->of,of->errcode);
-    if ( flt_load_from_filename( newextref->name, newextref->of, fltint->opts) != FLT_OK )
+
+    // build new path name using basepath
+    basefile = flt_path_basefile(newextref->name);
+    if ( basefile )
+    {
+      *fltint->tmpbuff='\0';
+      if ( fltint->basepath )
+      {
+        strcat(fltint->tmpbuff, fltint->basepath );
+        if ( !flt_path_endsok(fltint->basepath) ) strcat(fltint->tmpbuff, "/");
+        strcat(fltint->tmpbuff, basefile);
+      }
+      else
+        strcpy(fltint->tmpbuff,newextref->name);
+    }
+    if ( flt_load_from_filename( fltint->tmpbuff, newextref->of, fltint->opts) != FLT_OK )
       flt_safefree(newextref->of);
+    flt_safefree(basefile);
   }
   return readbytes;
 }
@@ -705,7 +725,7 @@ FLT_RECORD_READER(flt_reader_vtx_color)
   flti32* abgr;
 
   // read data in
-  readbytes -= fread(fltint->tmpbuff,1,36,fltint->f);
+  readbytes -= fread(fltint->tmpbuff,1,flt_min(readbytes,36),fltint->f);
   coords=(double*)(fltint->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   abgr=(flti32*)(fltint->tmpbuff+28); flt_swap32(abgr);
 
@@ -726,7 +746,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal)
   flti32* abgr;
 
   // read data in
-  readbytes -= fread(fltint->tmpbuff,1,52,fltint->f);
+  readbytes -= fread(fltint->tmpbuff,1,flt_min(readbytes,52),fltint->f);
   coords=(double*)(fltint->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   normal=(float*)(fltint->tmpbuff+28); flt_swap32(normal); flt_swap32(normal+1); flt_swap32(normal+2);
   abgr=(flti32*)(fltint->tmpbuff+40); flt_swap32(abgr);
@@ -748,7 +768,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_uv)
   flti32* abgr;
 
   // read data in
-  readbytes -= fread(fltint->tmpbuff,1,40,fltint->f);
+  readbytes -= fread(fltint->tmpbuff,1,flt_min(readbytes,40),fltint->f);
   coords=(double*)(fltint->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   uv=(float*)(fltint->tmpbuff+28); flt_swap32(uv); flt_swap32(uv+1);
   abgr=(flti32*)(fltint->tmpbuff+36); flt_swap32(abgr);
@@ -771,7 +791,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal_uv)
   flti32* abgr;
 
   // read data in
-  readbytes -= fread(fltint->tmpbuff,1,60,fltint->f);
+  readbytes -= fread(fltint->tmpbuff,1,flt_min(readbytes,60),fltint->f);
   coords=(double*)(fltint->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   normal=(float*)(fltint->tmpbuff+28); flt_swap32(normal); flt_swap32(normal+1); flt_swap32(normal+2);
   uv=(float*)(fltint->tmpbuff+40); flt_swap32(uv); flt_swap32(uv+1);
@@ -1106,6 +1126,8 @@ const char* flt_get_err_reason(int errcode)
   case FLT_OK         : return "Ok"; 
   case FLT_ERR_FOPEN  : return "IO Error opening/reading file or not found"; 
   case FLT_ERR_VERSION: return "Version error. Max. supported version FLT_GREATER_SUPPORTED_VERSION";
+  case FLT_ERR_MEMOUT : return "Running out of memory. Malloc returns null";
+  case FLT_ERR_READBEYOND_REC: return "Read beyond record. Skip bytes is negative. Version error?";
   }
 #else
   switch ( errcode )
@@ -1113,6 +1135,8 @@ const char* flt_get_err_reason(int errcode)
   case FLT_OK         : return "Ok"; 
   case FLT_ERR_FOPEN  : return "File error"; 
   case FLT_ERR_VERSION: return "Version unsupported";
+  case FLT_ERR_MEMOUT : return "Out of mem";
+  case FLT_ERR_READBEYOND_REC: return "Read beyond record"; 
   }
 #endif
   return "Unknown";
