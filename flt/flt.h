@@ -25,9 +25,11 @@ SOFTWARE.
 /*
 DOCUMENTATION 
 
+(Defines)
 - Define FLT_NO_OPNAMES to skip opcode name strings
 - Define FLT_IMPLEMENTATION before including this in *one* C/CPP file to expand the implementation
 - Define the supported version in FLT_VERSION. Maximum supported version is FLT_GREATER_SUPPORTED_VERSION
+- Define FLT_NO_MEMOUT_CHECK to skip out-of-mem error
 */
 
 #ifndef _FLT_H_
@@ -45,6 +47,7 @@ Version check
 #define FLT_ERR_FOPEN 1
 #define FLT_ERR_OPREAD 2
 #define FLT_ERR_VERSION 3
+#define FLT_ERR_MEMOUT 4
 
 #define FLT_GREATER_SUPPORTED_VERSION 1640
 
@@ -66,32 +69,55 @@ extern "C" {
   typedef short flti16;
   typedef int   flti32;
 
-  struct flt_header;
-  struct flt_pal_tex;
+  typedef struct flt_header;
+
+  typedef struct flt_pal_tex
+  {
+    char name[200];
+    flti32 patt_ndx;
+    flti32 xy_loc[2];
+    struct flt_pal_tex* next;
+  }flt_pal_tex;
 
   typedef struct flt_opts
   {
     fltu32 flags;      
-    fltu32 palflags;         // palette flags (see FLT_OPT_PAL_*)
-    fltu16* vtxstream;       // array of semantic bytes, ended with 0
+    fltu16* vtxstream;
   }flt_opts;
+
+  typedef struct flt_palettes
+  {
+    flt_pal_tex* pal_tex;
+    fltu32 pal_tex_count;
+    fltu8* pal_vtx;          
+    flti32* pal_vtx_offsets;  // two consecutive offset says the stride
+    fltu32 pal_vtx_count;
+  }flt_palettes;
+
+
+  typedef struct flt_hie_full
+  {
+    int reserved;
+  }flt_hie_full;
+
+  typedef struct flt_hie_flat
+  {
+    int reserved;
+  }flt_hie_flat;
 
   typedef struct flt
   {
-    flt_header* header;
-    flt_pal_tex* pal_tex;
-    fltu32 pal_tex_count;
-
-    fltu8* pal_vtx;          // memory with all vertices
-    flti32* pal_vtx_offsets; // vtx offset to pal_vtx. offset[i+1]-offset[i]=vstride[i] (aka format)
-    fltu32 pal_vtx_count;
+    struct flt_header* header;     // header
+    flt_palettes* pal;      // palettes
+    flt_hie_full* hie_full; // hierarchy full
+    flt_hie_flat* hie_flat; // hierarchy flat
 
     int errcode;
     void* reserved;
   }flt;
 
     // Load openflight information into of with given options
-  bool flt_load_from_filename(const char* filename, flt* of, flt_opts* opts);
+  int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts);
 
     // Deallocates all memory
   void flt_release(flt* of);
@@ -106,10 +132,7 @@ extern "C" {
   void flt_vtx_stream_dec(fltu16 stream, fltu8* semantic, fltu8* offset, fltu8* size);
 
     // Computes the size of a vertex stream in bytes
-  int flt_vtx_size(fltu16* vstr)
-
-#ifdef __cplusplus
-};
+  fltu32 flt_vtx_size(fltu16* vstr);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -179,38 +202,29 @@ typedef struct flt_header
   double   earth_minor_axis;
 }flt_header;
 
-typedef struct flt_pal_tex
-{
-  char name[200];
-  flti32 patt_ndx;
-  flti32 xy_loc[2];
-  flt_pal_tex* next;
-}flt_pal_tex;
-
 #pragma pack (pop)
 
 // FLT Options
 // flags
-#define FLT_OPT_HEADER            (1<<00) // read header
-
-// palettes
-#define FLT_OPT_PAL_NAMETABLE     (1<<00) // name table record
-#define FLT_OPT_PAL_COLOR         (1<<01) // color 
-#define FLT_OPT_PAL_MATERIAL      (1<<02) // material
-#define FLT_OPT_PAL_MATERIALEXT   (1<<03) // extended material
-#define FLT_OPT_PAL_TEXTURE       (1<<04) // texture
-#define FLT_OPT_PAL_TEXTUREMAPP   (1<<05) // texture mapping
-#define FLT_OPT_PAL_SOUND         (1<<06) // sound
-#define FLT_OPT_PAL_LIGHTSRC      (1<<07) // light source
-#define FLT_OPT_PAL_LIGHTPNT      (1<<08) // light point
-#define FLT_OPT_PAL_LIGHTPNTANIM  (1<<09) // light point animation
-#define FLT_OPT_PAL_LINESTYLE     (1<<10) // line style
-#define FLT_OPT_PAL_SHADER        (1<<11) // shader
-#define FLT_OPT_PAL_EYEPNT_TCKPLN (1<<12) // eyepoint and trackplane
-#define FLT_OPT_PAL_LINKAGE       (1<<13) // linkage
-#define FLT_OPT_PAL_EXTGUID       (1<<14) // extension GUID
-#define FLT_OPT_PAL_VERTEX        (1<<15) // vertex
-#define FLT_OPT_VTX_FORMATSOURCE  (1<<16) // use original vertex format
+#define FLT_OPT_HEADER            (1<<01) // read header
+#define FLT_OPT_PAL_NAMETABLE     (1<<02) // name table record
+#define FLT_OPT_PAL_COLOR         (1<<03) // color 
+#define FLT_OPT_PAL_MATERIAL      (1<<04) // material
+#define FLT_OPT_PAL_MATERIALEXT   (1<<05) // extended material
+#define FLT_OPT_PAL_TEXTURE       (1<<06) // texture
+#define FLT_OPT_PAL_TEXTUREMAPP   (1<<07) // texture mapping
+#define FLT_OPT_PAL_SOUND         (1<<08) // sound
+#define FLT_OPT_PAL_LIGHTSRC      (1<<09) // light source
+#define FLT_OPT_PAL_LIGHTPNT      (1<<10) // light point
+#define FLT_OPT_PAL_LIGHTPNTANIM  (1<<11) // light point animation
+#define FLT_OPT_PAL_LINESTYLE     (1<<12) // line style
+#define FLT_OPT_PAL_SHADER        (1<<13) // shader
+#define FLT_OPT_PAL_EYEPNT_TCKPLN (1<<14) // eyepoint and trackplane
+#define FLT_OPT_PAL_LINKAGE       (1<<15) // linkage
+#define FLT_OPT_PAL_EXTGUID       (1<<16) // extension GUID
+#define FLT_OPT_PAL_VERTEX        (1<<17) // vertex
+#define FLT_OPT_VTX_FORMATSOURCE  (1<<18) // use original vertex format
+#define FLT_OPT_HIERARCHY_FLAT    (1<<19) // flat hierarchy
 
 // vertex semantic
 #define FLT_VTX_POSITION 0
@@ -237,6 +251,8 @@ typedef struct flt_pal_tex
 #define FLT_OP_VERTEX_COLOR_UV 71
 #define FLT_OP_MAX 154
 
+#ifdef __cplusplus
+};
 #endif // cplusplus
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -260,6 +276,12 @@ typedef struct flt_pal_tex
 #endif
 
 #define flt_safefree(p) { if (p){ flt_free(p); (p)=0;} }
+
+#ifdef FLT_NO_MEMOUT_CHECK
+#define flt_memout_check(p,e)
+#else
+#define flt_memout_check(p,e) { if ( !(p) ) { e = FLT_ERR_MEMOUT; return -1; } }
+#endif
 
 #if defined(WIN32) || defined(_WIN32) || (defined(sgi) && defined(unix) && defined(_MIPSEL)) || (defined(sun) && defined(unix) && !defined(_BIG_ENDIAN)) || (defined(__BYTE_ORDER) && (__BYTE_ORDER == __LITTLE_ENDIAN)) || (defined(__APPLE__) && defined(__LITTLE_ENDIAN__)) || (defined( _PowerMAXOS ) && (BYTE_ORDER == LITTLE_ENDIAN ))
 #define FLT_LITTLE_ENDIAN
@@ -299,7 +321,7 @@ void flt_swap64(void* d)
 # define flt_swap64(d)
 #endif
 
-#define flt_offsetto(n,t)  ((int)( (unsigned char*)&((t*)(0))->n - (unsigned char*)(0) ))
+#define flt_offsetto(n,t)  ( (fltu8*)&((t*)(0))->n - (fltu8*)(0) )
 #define FLT_RECORD_READER(name) flti32 name(flt_op* oh, flt* of)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -317,18 +339,16 @@ typedef struct flt_internal
   FILE* f;
   flt_pal_tex* pal_tex_last;
   flt_opts* opts;
-  flt_rec_reader* optable;
   fltu32 vtx_offset;
 }flt_internal;
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-bool flt_err(int err, flt* of);
-bool flt_read_ophead(fltu16 op, flt_op* data, FILE* f);
+int flt_err(int err, flt* of);
+int flt_read_ophead(fltu16 op, flt_op* data, FILE* f);
 void flt_swap_desc(void* data, flt_end_desc* desc);
 const char* flt_get_op_name(fltu16 opcode);
-int flt_vtx_size(fltu16* vstr);
 fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr, float* normal, float* uv);
 void flt_vtx_write_PC(flt* of, double* xyz, fltu32 abgr);
 void flt_vtx_write_PCN(flt* of, double* xyz, fltu32 abgr, float* normal);
@@ -345,33 +365,34 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal_uv);    // FLT_OP_VERTEX_COLOR_NOR
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-bool flt_err(int err, flt* of)
+int flt_err(int err, flt* of)
 {
   flt_internal* fltint = (flt_internal*)of->reserved;
   of->errcode = err;
   if ( fltint->f ) { fclose(fltint->f); fltint->f=0; }  
   if ( err != FLT_OK ) flt_release(of);
-  return false;
+  return 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-bool flt_read_ophead(fltu16 op, flt_op* data, FILE* f)
+int flt_read_ophead(fltu16 op, flt_op* data, FILE* f)
 {
   if ( fread(data,1,sizeof(flt_op),f) != sizeof(flt_op) )
-    return false;
+    return 0;
   flt_swap16(&data->op); flt_swap16(&data->length);
   return op==FLT_OP_DONTCARE || data->op == op;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-bool flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
+int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 {
   flt_op oh;
   int skipbytes;  
   flt_rec_reader optable[FLT_OP_MAX]={0};
   flt_internal fltint={0};
+  char usepalette=0;
 
   // opening file
   fltint.f = fopen(filename, "rb");
@@ -380,19 +401,26 @@ bool flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 
   // preparing internal obj
   fltint.opts = opts;
-  fltint.optable = optable;
   of->reserved = &fltint;  
   
   // configuring readers
   optable[FLT_OP_HEADER] = flt_reader_header;         // always read header
   optable[FLT_OP_PAL_VERTEX] = flt_reader_pal_vertex; // always read vertex palette header for skipping at least
-  if ( opts->palflags & FLT_OPT_PAL_TEXTURE ) optable[FLT_OP_PAL_TEXTURE] = flt_reader_pal_tex;
-  if ( opts->palflags & FLT_OPT_PAL_VERTEX ) // if reading vertices
+  if ( opts->flags & FLT_OPT_PAL_TEXTURE ) { optable[FLT_OP_PAL_TEXTURE] = flt_reader_pal_tex; usepalette=1; }
+  if ( opts->flags & FLT_OPT_PAL_VERTEX ) // if reading vertices
   {
     optable[FLT_OP_VERTEX_COLOR] = flt_reader_vtx_color;
     optable[FLT_OP_VERTEX_COLOR_NORMAL] = flt_reader_vtx_color_normal;
     optable[FLT_OP_VERTEX_COLOR_UV] = flt_reader_vtx_color_uv;
     optable[FLT_OP_VERTEX_COLOR_NORMAL_UV] = flt_reader_vtx_color_normal_uv;
+    usepalette=1;
+  }
+
+  if (usepalette)
+  {
+    of->pal = (flt_palettes*)flt_malloc(sizeof(flt_palettes));
+    memset(of->pal,0,sizeof(flt_palettes));
+    flt_memout_check(of->pal,of->errcode);
   }
 
   // reading loop
@@ -429,7 +457,7 @@ FLT_RECORD_READER(flt_reader_header)
     {64, 2, flt_offsetto(d_db_z,flt_header)},
     {16, 2, flt_offsetto(n_mesh_nid,flt_header)},
     {64, 2, flt_offsetto(earth_major_axis,flt_header)},
-    {NULL,NULL,NULL}
+    {0,0,0}
   };
   flt_internal* fltint=(flt_internal*)of->reserved;
   int readbytes=oh->length-sizeof(flt_op);
@@ -438,7 +466,8 @@ FLT_RECORD_READER(flt_reader_header)
   if ( fltint->opts->flags & FLT_OPT_HEADER ) 
   {
     // if storing header, read it entirely
-    of->header = (flt_header*)malloc(sizeof(flt_header));
+    of->header = (flt_header*)flt_malloc(sizeof(flt_header));
+    flt_memout_check(of->header, of->errcode);
     readbytes -= fread(of->header, 1, readbytes, fltint->f);  
     flt_swap_desc(of->header,desc); // endianess
     format_rev = of->header->format_rev;
@@ -462,23 +491,25 @@ FLT_RECORD_READER(flt_reader_pal_tex)
 {
   flt_end_desc desc[]={
     {32, 3, flt_offsetto(patt_ndx,flt_pal_tex)},
-    {NULL,NULL,NULL}
+    {0,0,0}
   };
-
+  int readbytes;
   flt_internal* fltint = (flt_internal*)of->reserved;
-  flt_pal_tex* newpt = (flt_pal_tex*)malloc(sizeof(flt_pal_tex));
+  flt_pal_tex* newpt = (flt_pal_tex*)flt_malloc(sizeof(flt_pal_tex));
+
+  flt_memout_check(newpt, of->errcode);
   if ( fltint->pal_tex_last )
     fltint->pal_tex_last->next = newpt;
   else
-    of->pal_tex = newpt;
+    of->pal->pal_tex = newpt;
 
-  int readbytes = oh->length-sizeof(flt_op);
+  readbytes = oh->length-sizeof(flt_op);
   readbytes -= fread(newpt, 1, readbytes, fltint->f);
   flt_swap_desc(newpt, desc);
   newpt->next = 0;
 
   fltint->pal_tex_last = newpt;
-  ++of->pal_tex_count;
+  ++of->pal->pal_tex_count;
   return readbytes;
 }
 
@@ -488,7 +519,7 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
 {
   flt_internal* fltint=(flt_internal*)of->reserved;
   int readbytes, vmaxcount;
-  int vtxsize;
+  fltu32 vtxsize;
 
   // record header
   fread(&vmaxcount,4,1,fltint->f);
@@ -496,7 +527,7 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
   readbytes = oh->length - sizeof(flt_op) - 4;
 
   // read vertices from palette?
-  if ( fltint->opts->palflags & FLT_OPT_PAL_VERTEX )
+  if ( fltint->opts->flags & FLT_OPT_PAL_VERTEX )
   {
     // no of vertices. Use smallest vtx record to have an upper bound of no. vertices in mem/file
     vmaxcount -= sizeof(flt_op)+4;
@@ -509,16 +540,19 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
     {
       fltint->opts->flags |= FLT_OPT_VTX_FORMATSOURCE;
       // allocates for the biggest format size to be sure we have enough memory
-      of->pal_vtx = (fltu8*)malloc( vmaxcount * 48 ); 
+      of->pal->pal_vtx = (fltu8*)flt_malloc( vmaxcount * 48 ); 
+      flt_memout_check(of->pal->pal_vtx, of->errcode);
       // array of offsets. for the format of vertex i, it is the format to the associated vertex size (offset_next - offset)
-      of->pal_vtx_offsets = (flti32*)malloc( vmaxcount * sizeof(flti32) );
+      of->pal->pal_vtx_offsets = (flti32*)flt_malloc( vmaxcount * sizeof(flti32) );
+      flt_memout_check(of->pal->pal_vtx_offsets, of->errcode);
     }
     else 
     {
       // force to use the passed in vertex stream format
-      of->pal_vtx = (fltu8*)malloc( vmaxcount * vtxsize );
+      of->pal->pal_vtx = (fltu8*)flt_malloc( vmaxcount * vtxsize );
+      flt_memout_check(of->pal->pal_vtx, of->errcode);
       // in the pointer of offsets stores the negative of the vertex size
-      of->pal_vtx_offsets = (flti32*)-vtxsize;
+      of->pal->pal_vtx_offsets = (flti32*)(-(flti32)vtxsize);
     }
   }
 
@@ -627,12 +661,12 @@ void flt_release(flt* of)
   flt_safefree(of->header);
 
   // texture palette list
-  pt=pn=of->pal_tex; while (pt){ pn=pt->next; flt_free(pt); pt=pn; } 
+  pt=pn=of->pal->pal_tex; while (pt){ pn=pt->next; flt_free(pt); pt=pn; } 
 
   // vertex palette
-  flt_safefree(of->pal_vtx);
-  if ( (int)of->pal_vtx_offsets<-512 || (int)of->pal_vtx_offsets>0 ) 
-    flt_safefree(of->pal_vtx_offsets); // be sure it does not encode a fixed vertex size (negative)
+  flt_safefree(of->pal->pal_vtx);
+  if ( (int)of->pal->pal_vtx_offsets<-512 || (int)of->pal->pal_vtx_offsets>0 ) 
+    flt_safefree(of->pal->pal_vtx_offsets); // be sure it does not encode a fixed vertex size (negative)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -646,23 +680,23 @@ void flt_vtx_write(flt* of, fltu16* stream, double* xyz, fltu32 abgr, float* uv,
 
   if ( !stream ) stream = fltint->opts->vtxstream;
   // offset to current vertex
-  vertex = of->pal_vtx + fltint->vtx_offset;
+  vertex = of->pal->pal_vtx + fltint->vtx_offset;
 
   // if format source used, update array and use the source stream
   // use source. gets offset to next vertex, saves pos+color, advance offset accordingly
   if ( fltint->opts->flags & FLT_OPT_VTX_FORMATSOURCE )
-    of->pal_vtx_offsets[of->pal_vtx_count] = fltint->vtx_offset;
+    of->pal->pal_vtx_offsets[of->pal->pal_vtx_count] = fltint->vtx_offset;
 
   fltint->vtx_offset += flt_vtx_write_sem(vertex, stream, xyz, abgr, normal, uv);   
-  ++of->pal_vtx_count;
+  ++of->pal->pal_vtx_count;
 }
-
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void flt_vtx_write_PC(flt* of, double* xyz, fltu32 abgr)
 {
   flt_internal* fltint=(flt_internal*)of->reserved;  
-  static fltu16 srcstream[]={ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), 0};
+  //{ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), 0};
+  static fltu16 srcstream[]={1536, 4376, 0};
   fltu16* stream=0;
   if ( fltint->opts->flags & FLT_OPT_VTX_FORMATSOURCE ) stream = srcstream;
   flt_vtx_write(of,stream,xyz,abgr,flt_defaultuv, flt_defaultnormal);
@@ -673,7 +707,8 @@ void flt_vtx_write_PC(flt* of, double* xyz, fltu32 abgr)
 void flt_vtx_write_PCN(flt* of, double* xyz, fltu32 abgr, float* normal)
 { 
   flt_internal* fltint=(flt_internal*)of->reserved;  
-  static fltu16 srcstream[]={ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), flt_vtx_stream_enc(FLT_VTX_NORMAL,28,12), 0};
+  //{ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), flt_vtx_stream_enc(FLT_VTX_NORMAL,28,12), 0};
+  static fltu16 srcstream[]={1536, 4376, 8988, 0};
   fltu16* stream=0;
   if ( fltint->opts->flags & FLT_OPT_VTX_FORMATSOURCE ) stream = srcstream;
   flt_vtx_write(of,stream,xyz,abgr,flt_defaultuv,normal);
@@ -683,7 +718,8 @@ void flt_vtx_write_PCN(flt* of, double* xyz, fltu32 abgr, float* normal)
 void flt_vtx_write_PCT(flt* of, double* xyz, fltu32 abgr, float* uv)
 {
   flt_internal* fltint=(flt_internal*)of->reserved;  
-  static fltu16 srcstream[]={ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), flt_vtx_stream_enc(FLT_VTX_UV0,28,8), 0};
+  //{ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), flt_vtx_stream_enc(FLT_VTX_UV0,28,8), 0};
+  static fltu16 srcstream[]={1536, 4376, 12828, 0};
   fltu16* stream=0;
   if ( fltint->opts->flags & FLT_OPT_VTX_FORMATSOURCE ) stream = srcstream;
   flt_vtx_write(of,stream,xyz,abgr,uv,flt_defaultnormal);
@@ -694,7 +730,8 @@ void flt_vtx_write_PCT(flt* of, double* xyz, fltu32 abgr, float* uv)
 void flt_vtx_write_PCNT(flt* of, double* xyz, fltu32 abgr, float* uv, float* normal)
 {
   flt_internal* fltint=(flt_internal*)of->reserved;  
-  static fltu16 srcstream[]={ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), flt_vtx_stream_enc(FLT_VTX_NORMAL,28,12), flt_vtx_stream_enc(FLT_VTX_UV0,40,8), 0};
+  //{ flt_vtx_stream_enc(FLT_VTX_POSITION,0,24), flt_vtx_stream_enc(FLT_VTX_COLOR,24,4), flt_vtx_stream_enc(FLT_VTX_NORMAL,28,12), flt_vtx_stream_enc(FLT_VTX_UV0,40,8), 0};
+  static fltu16 srcstream[]={1536, 4376, 8988, 12840, 0};
   fltu16* stream=0;
   if ( fltint->opts->flags & FLT_OPT_VTX_FORMATSOURCE ) stream = srcstream;
   flt_vtx_write(of,stream,xyz,abgr,uv,normal);
@@ -918,10 +955,10 @@ void flt_vtx_stream_dec(fltu16 sem, fltu8* semantic, fltu8* offset, fltu8* size)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // returns the number of bytes needed for the passed vertex stream format 
 ////////////////////////////////////////////////////////////////////////////////////////////////
-int flt_vtx_size(fltu16* vstr)
+fltu32 flt_vtx_size(fltu16* vstr)
 {
   fltu8 sem,offs,size;
-  int totalsize=0;
+  fltu32 totalsize=0;
 
   if ( !vstr ) return 0;
   while (*vstr)

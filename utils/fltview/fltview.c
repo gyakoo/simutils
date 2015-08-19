@@ -1,11 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
-#include <set>
-#include <map>
-#include <vector>
-#include <string>
-#include <algorithm>
 #ifdef _MSC_VER
 #include <windows.h>
 #endif
@@ -28,7 +22,7 @@ double fltGetTime()
 
 void print_flt(flt* of, double tim)
 {
-  flt_pal_tex* pt = of->pal_tex;
+  flt_pal_tex* pt = of->pal->pal_tex;
 
   printf( "Time: %g\n", tim/1000.0);
   while ( pt )
@@ -37,7 +31,7 @@ void print_flt(flt* of, double tim)
     pt = pt->next;
   }
 
-  printf( "No. vertices: %d\n", of->pal_vtx_count );
+  printf( "No. vertices: %d\n", of->pal->pal_vtx_count );
 }
 
 void read_with_custom_vertex_format(const char* filename)
@@ -45,16 +39,15 @@ void read_with_custom_vertex_format(const char* filename)
   double t0;
   flt_opts opts={0};
   flt of={0};
-  fltu16 vtxstream[]={ 
-    flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12), 
-    flt_vtx_stream_enc(FLT_VTX_COLOR    ,12, 4),
-    flt_vtx_stream_enc(FLT_VTX_NORMAL   ,16,12),
-    0
-  };
+  fltu16 vtxstream[4]={ 0 };
+  vtxstream[0]=flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12); 
+  vtxstream[1]=flt_vtx_stream_enc(FLT_VTX_COLOR    ,12, 4);
+  vtxstream[2]=flt_vtx_stream_enc(FLT_VTX_NORMAL   ,16,12);
+  vtxstream[3]=0;
 
   // configuring read options (we want header, texture palettes and vertices with pos/col/norm format)
   opts.flags |= FLT_OPT_HEADER;
-  opts.palflags |= FLT_OPT_PAL_TEXTURE | FLT_OPT_PAL_VERTEX;
+  opts.flags |= FLT_OPT_PAL_TEXTURE | FLT_OPT_PAL_VERTEX;
   opts.vtxstream = vtxstream;
 
   // actual read
@@ -75,7 +68,7 @@ void read_with_orig_vertex_format(const char* filename)
   flt of={0};
 
   // configuring read options (we want header, texture palettes and vertices with pos/col/norm format)
-  opts.palflags |= FLT_OPT_PAL_VERTEX;
+  opts.flags |= FLT_OPT_PAL_VERTEX;
   opts.flags |= FLT_OPT_VTX_FORMATSOURCE;
 
   // actual read
