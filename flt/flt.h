@@ -69,7 +69,6 @@ Version check
 #define FLT_ERR_MEMOUT 4
 
 #define FLT_GREATER_SUPPORTED_VERSION 1640
-
 #ifndef FLT_VERSION
 #define FLT_VERSION FLT_GREATER_SUPPORTED_VERSION
 #endif
@@ -158,18 +157,39 @@ extern "C" {
   typedef int   flti32;
 
   typedef struct flt;
+  typedef struct flt_opts;
   typedef struct flt_header;
   typedef struct flt_pal_tex;
   typedef struct flt_node_extref;
   typedef int (*flt_callback_texture)(struct flt_pal_tex* texpal, struct flt* of, void* user_data);
   typedef int (*flt_callback_extref)(struct flt_node_extref* extref, struct flt* of, void* user_data);
   
+
+  // Load openflight information into of with given options
+  int flt_load_from_filename(const char* filename, struct flt* of, struct flt_opts* opts);
+
+  // Deallocates all memory
+  void flt_release(struct flt* of);
+
+  // Returns reason of the error code. Define FLT_LONG_ERR_MESSAGES for longer texts.
+  const char* flt_get_err_reason(int errcode);
+
+  // Encodes a vertex stream semantic word with the semantic and the offset
+  fltu16 flt_vtx_stream_enc(fltu8 semantic, fltu8 offset, fltu8 size);
+
+  // Decodes a vertex stream semantic word
+  void flt_vtx_stream_dec(fltu16 stream, fltu8* semantic, fltu8* offset, fltu8* size);
+
+  // Computes the size of a vertex stream in bytes
+  fltu32 flt_vtx_size(fltu16* vstr);
+
   // Parsing options
   typedef struct flt_opts
   {
     fltu32 palflags;                          // palette flags        (FLT_OPT_PAL_*)
     fltu32 hieflags;                          // hierarchy/node flags (FLT_OPT_HIE_*)
-    fltu16* vtxstream;                        // custom forced vertex format or null for original
+    fltu16* vtxstream;                        // optional custom forced vertex format or null for original
+    const char** search_paths;                // optional custom array of search paths ordered. last element should be null.
     flt_callback_extref   cb_extref;          // optional callback when an external ref is found
     flt_callback_texture  cb_texture;         // optional callback when a texture entry is found
     void* cb_user_data;                       // optional data to pass to callbacks
@@ -209,25 +229,7 @@ extern "C" {
     int errcode;                              // error code (see flt_get_err_reason)
     void* reserved;                           // internal parsing context data
   }flt;
-
-    // Load openflight information into of with given options
-  int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts);
-
-    // Deallocates all memory
-  void flt_release(flt* of);
-
-    // Returns reason of the error code. Define FLT_LONG_ERR_MESSAGES for longer texts.
-  const char* flt_get_err_reason(int errcode);
-
-    // Encodes a vertex stream semantic word with the semantic and the offset
-  fltu16 flt_vtx_stream_enc(fltu8 semantic, fltu8 offset, fltu8 size);
-
-    // Decodes a vertex stream semantic word
-  void flt_vtx_stream_dec(fltu16 stream, fltu8* semantic, fltu8* offset, fltu8* size);
-
-    // Computes the size of a vertex stream in bytes
-  fltu32 flt_vtx_size(fltu16* vstr);
-
+  
   #pragma pack(push,1)
   typedef struct flt_op
   { 
@@ -346,9 +348,11 @@ extern "C" {
 #define flt_safefree(p) { if (p){ flt_free(p); (p)=0;} }
 
 #ifdef FLT_NO_MEMOUT_CHECK
-#define flt_memout_check(p,e)
+#define flt_mem_check(p,e)
+#define flt_mem_check2(p,e)
 #else
-#define flt_memout_check(p,e) { if ( !(p) ) { e = FLT_ERR_MEMOUT; return -1; } }
+#define flt_mem_check(p,e) { if ( !(p) ) { e = FLT_ERR_MEMOUT; return -1; } }
+#define flt_mem_check2(p,of){ if ( !(p) ) return flt_err(FLT_ERR_MEMOUT,of); }
 #endif
 
 #if defined(WIN32) || defined(_WIN32) || (defined(sgi) && defined(unix) && defined(_MIPSEL)) || (defined(sun) && defined(unix) && !defined(_BIG_ENDIAN)) || (defined(__BYTE_ORDER) && (__BYTE_ORDER == __LITTLE_ENDIAN)) || (defined(__APPLE__) && defined(__LITTLE_ENDIAN__)) || (defined( _PowerMAXOS ) && (BYTE_ORDER == LITTLE_ENDIAN ))
@@ -410,6 +414,7 @@ typedef struct flt_internal
   flt_node_extref* node_extref_last;
   flt_opts* opts;
   fltu32 vtx_offset;
+  char* basepath;
   char tmpbuff[1024];
 }flt_internal;
 
@@ -428,6 +433,10 @@ void flt_vtx_write_PCNT(flt* of, double* xyz, fltu32 abgr, float* uv, float* nor
 void flt_node_extref_add(flt* of, flt_node_extref* node);
 void flt_release_hie_flat(flt_hie_flat* flat);
 void flt_release_hie_full(flt_hie_full* full);
+FILE* flt_fopen(const char* filename, flt* of);
+char* flt_path_base(const char* filaname);
+char* flt_path_basefile(const char* filename);
+int flt_path_endsok(const char* filename);
 
 FLT_RECORD_READER(flt_reader_header);                 // FLT_OP_HEADER
 FLT_RECORD_READER(flt_reader_pal_tex);                // FLT_OP_PAL_TEXTURE
@@ -445,7 +454,11 @@ int flt_err(int err, flt* of)
 {
   flt_internal* fltint = (flt_internal*)of->reserved;
   of->errcode = err;
-  if ( fltint && fltint->f ) { fclose(fltint->f); fltint->f=0; }  
+  if ( fltint ) 
+  { 
+    if ( fltint->f ) fclose(fltint->f); fltint->f=0; 
+    flt_safefree(fltint->basepath);
+  }
   if ( err != FLT_OK ) flt_release(of);
   return err;
 }
@@ -470,15 +483,14 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   flt_internal fltint={0};
   char usepalette=0;
 
-  // opening file
-  memset(of,0,sizeof(flt));
-  fltint.f = fopen(filename, "rb");
-  if ( !fltint.f ) return flt_err(FLT_ERR_FOPEN, of);
-  of->filename = flt_strdup(filename);
-
   // preparing internal obj
+  memset(of,0,sizeof(flt));
   fltint.opts = opts;
   of->reserved = &fltint;  
+
+  // opening file
+  fltint.f = flt_fopen(filename, of);
+  if ( !fltint.f ) return flt_err(FLT_ERR_FOPEN, of);    
   
   // configuring reading
   optable[FLT_OP_HEADER] = flt_reader_header;         // always read header
@@ -496,19 +508,19 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   if (usepalette)
   {
     of->pal = (flt_palettes*)flt_calloc(1,sizeof(flt_palettes));
-    flt_memout_check(of->pal,of->errcode);
+    flt_mem_check2(of->pal,of);
   }
 
   // hierarchy mode
   if ( opts->hieflags & FLT_OPT_HIE_FLAT )
   {
     of->hie_flat = (flt_hie_flat*)flt_calloc(1,sizeof(flt_hie_flat));
-    flt_memout_check(of->hie_flat, of->errcode);
+    flt_mem_check2(of->hie_flat, of);
   }
   else
   {
     of->hie_full = (flt_hie_full*)flt_calloc(1,sizeof(flt_hie_full));
-    flt_memout_check(of->hie_full, of->errcode);
+    flt_mem_check2(of->hie_full, of);
   }
   
   // reading loop
@@ -555,7 +567,7 @@ FLT_RECORD_READER(flt_reader_header)
   {
     // if storing header, read it entirely
     of->header = (flt_header*)flt_malloc(sizeof(flt_header));
-    flt_memout_check(of->header, of->errcode);
+    flt_mem_check(of->header, of->errcode);
     readbytes -= fread(of->header, 1, readbytes, fltint->f);  
     flt_swap_desc(of->header,desc); // endianess
     format_rev = of->header->format_rev;
@@ -584,7 +596,7 @@ FLT_RECORD_READER(flt_reader_pal_tex)
   int readbytes;
   flt_internal* fltint = (flt_internal*)of->reserved;
   flt_pal_tex* newpt = (flt_pal_tex*)flt_calloc(1,sizeof(flt_pal_tex));
-  flt_memout_check(newpt, of->errcode);
+  flt_mem_check(newpt, of->errcode);
 
   readbytes = oh->length-sizeof(flt_op);
   readbytes -= fread(newpt, 1, readbytes, fltint->f);
@@ -615,7 +627,7 @@ FLT_RECORD_READER(flt_reader_extref)
   int readbytes;
   flt_internal* fltint = (flt_internal*)of->reserved;
   flt_node_extref* newextref = (flt_node_extref*)flt_calloc(1,sizeof(flt_node_extref));
-  flt_memout_check(newextref, of->errcode);
+  flt_mem_check(newextref, of->errcode);
 
   readbytes = oh->length-sizeof(flt_op);
   readbytes -= fread(newextref, 1, readbytes, fltint->f);
@@ -630,7 +642,7 @@ FLT_RECORD_READER(flt_reader_extref)
   if (fltint->opts->hieflags & FLT_OPT_HIE_EXTREF_RESOLVE )
   {
     newextref->of = (flt*)flt_malloc(sizeof(flt));
-    flt_memout_check(newextref->of,of->errcode);
+    flt_mem_check(newextref->of,of->errcode);
     if ( flt_load_from_filename( newextref->name, newextref->of, fltint->opts) != FLT_OK )
       flt_safefree(newextref->of);
   }
@@ -665,16 +677,16 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
       fltint->opts->palflags |= FLT_OPT_PAL_VTX_SOURCE;
       // allocates for the biggest format size to be sure we have enough memory
       of->pal->vtx = (fltu8*)flt_malloc( vmaxcount * 48 ); 
-      flt_memout_check(of->pal->vtx, of->errcode);
+      flt_mem_check(of->pal->vtx, of->errcode);
       // array of offsets. for the format of vertex i, it is the format to the associated vertex size (offset_next - offset)
       of->pal->vtx_offsets = (flti32*)flt_malloc( vmaxcount * sizeof(flti32) );
-      flt_memout_check(of->pal->vtx_offsets, of->errcode);
+      flt_mem_check(of->pal->vtx_offsets, of->errcode);
     }
     else 
     {
       // force to use the passed in vertex stream format
       of->pal->vtx = (fltu8*)flt_malloc( vmaxcount * vtxsize );
-      flt_memout_check(of->pal->vtx, of->errcode);
+      flt_mem_check(of->pal->vtx, of->errcode);
       // in the pointer of offsets stores the negative of the vertex size
       of->pal->vtx_offsets = (flti32*)(-(flti32)vtxsize);
     }
@@ -1140,6 +1152,8 @@ fltu32 flt_vtx_size(fltu16* vstr)
   return totalsize;
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr, float* normal, float* uv)
 {
   fltu32 tsize=0;
@@ -1172,6 +1186,111 @@ fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 ab
   return tsize;
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+// extract base path from filename (caller should free the returned pointer)
+////////////////////////////////////////////////////////////////////////////////////////////////
+char* flt_path_base(const char* filename)
+{
+  char *ret, *ptr;
+  int len;
+  if ( !filename) return 0;
+
+  len = strlen(filename);
+  ret=flt_strdup(filename);
+  ptr=ret+len;
+  while (ptr!=ret)
+  {
+    if ( *ptr=='\\' || *ptr=='/' )
+    {
+      // weren't not last
+      if ( ptr+1 != ret+len ) *(ptr+1)='\0';
+      break;
+    }
+    --ptr;
+  }
+  return ret;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// try to open the filename, and if couldn't then uses the search paths...
+////////////////////////////////////////////////////////////////////////////////////////////////
+FILE* flt_fopen(const char* filename, flt* of)
+{
+  flt_internal* fltint=(flt_internal*)of->reserved;  
+  fltu32 i=0;  
+  char* basefile;
+  const char* spath;
+
+  strcpy(fltint->tmpbuff,filename);
+  fltint->f = fopen(fltint->tmpbuff,"rb");
+  if( !fltint->f && fltint->opts->search_paths ) // failed original, use search paths if valid
+  {
+    // get the base file name
+    basefile = flt_path_basefile(filename);
+    while ( basefile ) // infinite if base file, but breaking in
+    {
+      spath = fltint->opts->search_paths[i];
+      if ( !spath ) break;
+      *fltint->tmpbuff='\0'; // empty the target
+      strcat(fltint->tmpbuff, spath);
+      if ( !flt_path_endsok(spath) ) strcat(fltint->tmpbuff, "/" );      
+      strcat(fltint->tmpbuff, basefile);
+      fltint->f = fopen(fltint->tmpbuff,"rb");
+      if (fltint->f) break;
+      ++i;
+    }
+    flt_safefree(basefile);
+  }
+
+  // if open ok, saves correct filename and base path
+  if ( fltint->f )
+  {
+    of->filename = flt_strdup(fltint->tmpbuff);  
+    fltint->basepath = flt_path_base(fltint->tmpbuff);
+  }
+  return fltint->f;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// extract the filename from a path
+////////////////////////////////////////////////////////////////////////////////////////////////
+char* flt_path_basefile(const char* filename)
+{
+  const char *ptr;
+  int len;
+
+  if ( !filename ) return NULL;
+  len = strlen(filename);
+  ptr = filename + len;
+  while ( ptr != filename )
+  {
+    if ( *ptr=='\\' || *ptr=='/' )
+    {
+      ++ptr;
+      break;
+    }
+    --ptr;
+  }
+
+  if ( ptr==filename+len ) return NULL;
+  return flt_strdup(ptr);  
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// returns 1 if path ends with / or \
+////////////////////////////////////////////////////////////////////////////////////////////////
+int flt_path_endsok(const char* filename)
+{
+  int len;
+  const char* ptr;
+
+  if ( !filename || !*filename ) return 0;
+  len = strlen(filename);
+  ptr = filename+len-1;
+  while (ptr!=filename && (*ptr==' ' || *ptr=='\t') )
+    --ptr;
+  return (*ptr=='\\' || *ptr=='/') ? 1 : 0;
+}
 
 /*
 

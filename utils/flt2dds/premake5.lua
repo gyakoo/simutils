@@ -38,19 +38,27 @@ solution "flt2dds"
         defines { "DEBUG", "_DEBUG" }
         flags { "Symbols", "ExtraWarnings"}                
         libdirs {"../../extern/nvtt/"..action.."/Debug.Win32/"}        
+        objdir "./build/obj/x32/debug"
+        targetdir "./build/bin/x32/debug/"
         
       configuration { "Debug", "x64" }
         defines { "DEBUG", "_DEBUG" }
-        flags { "Symbols", "ExtraWarnings"}                
+        flags { "Symbols", "ExtraWarnings"}
         libdirs {"../../extern/nvtt/"..action.."/Debug.x64/"}        
+        objdir "./build/obj/x64/debug"
+        targetdir "./build/bin/x64/debug/"
 
       configuration {"Release", "x32"}
         defines { "NDEBUG" }
         flags { "Optimize", "ExtraWarnings"}    
         libdirs {"../../extern/nvtt/"..action.."/Release.Win32/"}        
+        objdir "./build/obj/x32/release"
+        targetdir "./build/bin/x32/release/"
         
       configuration {"Release", "x64"}
         defines { "NDEBUG" }
         flags { "Optimize", "ExtraWarnings"}    
-        libdirs {"../../extern/nvtt/"..action.."/Release.x64/"}        
+        libdirs {"../../extern/nvtt/"..action.."/Release.x64/"}  
+        objdir "./build/obj/x64/release"    
+        targetdir "./build/bin/x64/release/"
   end

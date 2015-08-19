@@ -112,10 +112,34 @@ void read_with_callbacks_and_resolve(const char* filename)
   }
 }
 
+void read_with_search_paths()
+{
+  double t0;
+  flt_opts opts={0};
+  flt of={0};
+  const char* spaths[]={ "c:\\tmp", "D:/simulation/", "../../../data/titanic/", 0 };
+
+  // configuring read options
+  opts.palflags = 0;
+  opts.hieflags = FLT_OPT_HIE_FLAT;
+  opts.search_paths = spaths;
+  // actual read
+  t0=fltGetTime();
+  if ( flt_load_from_filename( "../titanic.flt", &of, &opts)==FLT_OK )
+  {
+    // printing texture records
+    print_flt(&of, fltGetTime()-t0);
+     
+    flt_release(&of);
+  }
+}
+
 int main(int argc, const char** argv)
 {
-  read_with_custom_vertex_format("../../../data/titanic/TITANIC.flt"); 
+  //read_with_custom_vertex_format("../../../data/titanic/TITANIC.flt"); 
   //read_with_orig_vertex_format("../../../data/titanic/TITANIC.flt");
   //read_with_callbacks_and_resolve("../../../data/utah/master.flt");
+  
+  read_with_search_paths();
   return 0;
 }
