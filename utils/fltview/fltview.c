@@ -3,6 +3,7 @@
 #ifdef _MSC_VER
 #include <windows.h>
 #endif
+#define FLT_NO_OPNAMES
 #define FLT_IMPLEMENTATION
 #include <flt.h>
 
@@ -22,7 +23,7 @@ double fltGetTime()
 
 void print_flt(flt* of, double tim)
 {
-  flt_pal_tex* pt = of->pal->pal_tex;
+  flt_pal_tex* pt = of->pal->tex_head;
 
   printf( "Time: %g\n", tim/1000.0);
   while ( pt )
@@ -31,7 +32,7 @@ void print_flt(flt* of, double tim)
     pt = pt->next;
   }
 
-  printf( "No. vertices: %d\n", of->pal->pal_vtx_count );
+  printf( "No. vertices: %d\n", of->pal->vtx_count );
 }
 
 void read_with_custom_vertex_format(const char* filename)
@@ -46,8 +47,8 @@ void read_with_custom_vertex_format(const char* filename)
   vtxstream[3]=0;
 
   // configuring read options (we want header, texture palettes and vertices with pos/col/norm format)
-  opts.flags |= FLT_OPT_HEADER;
-  opts.flags |= FLT_OPT_PAL_TEXTURE | FLT_OPT_PAL_VERTEX;
+  opts.palflags |= FLT_OPT_PAL_TEXTURE | FLT_OPT_PAL_VERTEX;
+  opts.hieflags |= FLT_OPT_HIE_HEADER;
   opts.vtxstream = vtxstream;
 
   // actual read
@@ -68,8 +69,37 @@ void read_with_orig_vertex_format(const char* filename)
   flt of={0};
 
   // configuring read options (we want header, texture palettes and vertices with pos/col/norm format)
-  opts.flags |= FLT_OPT_PAL_VERTEX;
-  opts.flags |= FLT_OPT_VTX_FORMATSOURCE;
+  opts.palflags = FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_SOURCE;
+  opts.hieflags = FLT_OPT_HIE_FLAT | FLT_OPT_HIE_EXTREF;
+
+  // actual read
+  t0=fltGetTime();
+  if ( flt_load_from_filename( filename, &of, &opts)==FLT_OK )
+  {
+    // printing texture records
+    print_flt(&of, fltGetTime()-t0);
+
+    flt_release(&of);
+  }
+}
+
+int callback_extref(flt_node_extref* extref, flt* of, void* userdata)
+{
+  printf( "From: %s (ExtRef: %s)\n", of->filename, extref->name );
+  return 1;
+}
+
+void read_with_callbacks_and_resolve(const char* filename)
+{
+  double t0;
+  flt_opts opts={0};
+  flt of={0};
+
+  // configuring read options
+  opts.palflags = 0;
+  opts.hieflags = FLT_OPT_HIE_HEADER | FLT_OPT_HIE_FLAT | FLT_OPT_HIE_EXTREF | FLT_OPT_HIE_EXTREF_RESOLVE;
+  opts.cb_extref = callback_extref;
+  opts.cb_user_data = (void*)1;
 
   // actual read
   t0=fltGetTime();
@@ -85,6 +115,7 @@ void read_with_orig_vertex_format(const char* filename)
 int main(int argc, const char** argv)
 {
   read_with_custom_vertex_format("../../../data/titanic/TITANIC.flt"); 
-  read_with_orig_vertex_format("../../../data/titanic/TITANIC.flt");
+  //read_with_orig_vertex_format("../../../data/titanic/TITANIC.flt");
+  //read_with_callbacks_and_resolve("../../../data/utah/master.flt");
   return 0;
 }
