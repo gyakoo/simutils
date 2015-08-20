@@ -66,7 +66,7 @@ DOCUMENTATION
 
 #ifdef _MSC_VER
 #include <Windows.h>
-#pragma warning(disable:4244 4100 4996)
+#pragma warning(disable:4244 4100 4996 4706 4091)
 #endif
 /* 
 Version check
@@ -77,6 +77,7 @@ Version check
 #define FLT_ERR_VERSION 3
 #define FLT_ERR_MEMOUT 4
 #define FLT_ERR_READBEYOND_REC 5
+#define FLT_ERR_ALREADY 6
 
 #define FLT_GREATER_SUPPORTED_VERSION 1640
 #ifndef FLT_VERSION
@@ -165,6 +166,7 @@ extern "C" {
   typedef char  flti8;
   typedef short flti16;
   typedef int   flti32;
+  typedef volatile long fltatom32;
 
   typedef struct flt;
   typedef struct flt_opts;
@@ -236,9 +238,10 @@ extern "C" {
     struct flt_palettes* pal;                 // palettes         (when any FLT_OPT_PAL_* flag is set)
     struct flt_hie_full* hie_full;            // hierarchy full   (default, only if any FLT_OPT_HIE_* is set)
     struct flt_hie_flat* hie_flat;            // hierarchy flat   (when FLT_OPT_HIE_FLAT)
+    fltatom32 ref;
 
     int errcode;                              // error code (see flt_get_err_reason)
-    struct flt_context* context;              // internal parsing context data (set null)
+    struct flt_context* ctx;                 // internal parsing context data (set null)
   }flt;
   
   #pragma pack(push,1)
@@ -434,7 +437,7 @@ typedef struct flt_context
   struct flt_dict* dict;
   fltu32 vtx_offset;
   char* basepath;
-  char tmpbuff[1024];
+  char tmpbuff[512];
 }flt_context;
 
 ////////////////////////////////////////////////
@@ -445,8 +448,8 @@ struct flt_critsec* flt_critsec_create();
 void flt_critsec_destroy(struct flt_critsec* cs);
 void flt_critsec_enter(struct flt_critsec* cs);
 void flt_critsec_leave(struct flt_critsec* cs);
-long flt_atomic_dec(long* c);
-long flt_atomic_inc(long* c);
+long flt_atomic_dec(fltatom32* c);
+long flt_atomic_inc(fltatom32* c);
 
 ////////////////////////////////////////////////
 // Dictionary 
@@ -463,7 +466,7 @@ typedef struct flt_dict
 {
   struct flt_dict_node** hasht;
   struct flt_critsec* cs;
-  long ref;
+  fltatom32 ref;
   int n_entries;
 }flt_dict;
 
@@ -508,16 +511,15 @@ static float flt_zerovec[4]={0};
 ////////////////////////////////////////////////////////////////////////////////////////////////
 int flt_err(int err, flt* of)
 {
-  flt_context* ctx = (flt_context*)of->context;
+  flt_context* ctx = of->ctx;
+
   of->errcode = err;
   if ( ctx ) 
   { 
-    if ( ctx->f ) fclose(ctx->f); ctx->f=0; 
-    flt_safefree(ctx->basepath);
-    if ( ctx->dict && !flt_atomic_dec(&ctx->dict->ref) )
-      flt_dict_destroy(&ctx->dict);
+    if ( ctx->f ) fclose(ctx->f); ctx->f=0;
   }
   if ( err != FLT_OK ) flt_release(of);
+  //printf( "finished\n");
   return err;
 }
 
@@ -538,24 +540,28 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   flt_op oh;
   int skipbytes;  
   flt_rec_reader optable[FLT_OP_MAX]={0};
-  flt_context ctx={0};
+  flt_context* ctx;
   char usepalette=0;
 
-  // preparing internal obj
-  ctx.opts = opts;  
-  if (of->context && of->context->dict)
+  // preparing internal obj (references and shared dict)
+  ctx = (flt_context*)flt_calloc(1,sizeof(flt_context));
+  ctx->opts = opts;  
+  if (of->ctx && of->ctx->dict) // reuse dictionary
   {
-    ctx.dict = of->context->dict; // reusing dict from (optional) passed context
-    flt_atomic_inc(&of->context->dict->ref);
+    ctx->dict = of->ctx->dict;
+    flt_atomic_inc(&of->ctx->dict->ref);
   }
-  of->context = &ctx;
-  if ( !ctx.dict )
-    flt_dict_create(0,1,&ctx.dict);
-  
+  of->ctx = ctx;
+  if ( !ctx->dict )
+    flt_dict_create(0,1,&ctx->dict);
+  flt_atomic_inc(&of->ref);
+
   // opening file
-  ctx.f = flt_fopen(filename, of);
-  if ( !ctx.f ) return flt_err(FLT_ERR_FOPEN, of);    
-  
+  ctx->f = flt_fopen(filename, of);
+  if ( !ctx->f ) return flt_err(FLT_ERR_FOPEN, of);
+
+  printf( "Reading \"%s\"\n", of->filename);
+
   // configuring reading
   optable[FLT_OP_HEADER] = flt_reader_header;         // always read header
   optable[FLT_OP_PAL_VERTEX] = flt_reader_pal_vertex; // always read vertex palette header for skipping at least
@@ -588,14 +594,14 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   }
   
   // reading loop
-  while ( flt_read_ophead(FLT_OP_DONTCARE, &oh, ctx.f) )
+  while ( flt_read_ophead(FLT_OP_DONTCARE, &oh, ctx->f) )
   {
     // if reader function available, use it
     skipbytes = optable[oh.op] ? optable[oh.op](&oh, of) : oh.length-sizeof(flt_op);
     
     // if returned negative, it's an error, if positive, we skip until next record
     if ( skipbytes < 0 )        return flt_err(FLT_ERR_READBEYOND_REC,of);
-    else if ( skipbytes > 0 )   fseek(ctx.f,skipbytes,SEEK_CUR); 
+    else if ( skipbytes > 0 )   fseek(ctx->f,skipbytes,SEEK_CUR); 
   }
 
   return flt_err(FLT_OK,of);
@@ -623,7 +629,7 @@ FLT_RECORD_READER(flt_reader_header)
     {64, 2, flt_offsetto(earth_major_axis,flt_header)},
     {0,0,0}
   };
-  flt_context* ctx=(flt_context*)of->context;
+  flt_context* ctx=of->ctx;
   int readbytes=oh->length-sizeof(flt_op);
   flti32 format_rev=0;
 
@@ -663,15 +669,16 @@ FLT_RECORD_READER(flt_reader_pal_tex)
     {0,0,0}
   };
   int readbytes;
-  flt_context* ctx = (flt_context*)of->context;
+  flt_context* ctx = of->ctx;
+  flt_opts* opts=ctx->opts;
   flt_pal_tex* newpt = (flt_pal_tex*)flt_calloc(1,sizeof(flt_pal_tex));
   flt_mem_check(newpt, of->errcode);
 
   readbytes = oh->length-sizeof(flt_op);
   readbytes -= fread(newpt, 1, flt_min(readbytes,sizeof(flt_pal_tex)), ctx->f);
   flt_swap_desc(newpt, desc);
-  if ( ctx->opts->cb_texture ) 
-    ctx->opts->cb_texture(newpt,of,ctx->opts->cb_user_data); // callback?
+  if ( opts->cb_texture ) 
+    opts->cb_texture(newpt,of,opts->cb_user_data); // callback?
 
   // adding node to list (use last if defined, or the beginning)
   if ( ctx->pal_tex_last )
@@ -695,25 +702,24 @@ FLT_RECORD_READER(flt_reader_extref)
     {0,0,0}
   };
   int readbytes;
-  flt_context* ctx = (flt_context*)of->context;
+  flt_context* ctx = of->ctx;
+  flt_opts* opts=ctx->opts;
   flt_node_extref* newextref = (flt_node_extref*)flt_calloc(1,sizeof(flt_node_extref));
   flt_mem_check(newextref, of->errcode);
 
   readbytes = oh->length-sizeof(flt_op);
   readbytes -= fread(newextref, 1, flt_min(readbytes,sizeof(flt_node_extref)), ctx->f);
   flt_swap_desc(newextref, desc);
-  if ( ctx->opts->cb_extref ) 
-    ctx->opts->cb_extref(newextref, of, ctx->opts->cb_user_data); // callback?
 
   // add node (that'll take care of hierarchy)
   flt_node_extref_add(of,newextref);
 
-  // if resolving external references...
-  if (ctx->opts->hieflags & FLT_OPT_HIE_EXTREF_RESOLVE )
-  {
-    newextref->of = (flt*)flt_calloc(1,sizeof(flt));
-    flt_mem_check(newextref->of,of->errcode);
+  if ( opts->cb_extref ) 
+    opts->cb_extref(newextref, of, opts->cb_user_data); // callback?
 
+  // if resolving external references...
+  if (opts->hieflags & FLT_OPT_HIE_EXTREF_RESOLVE )
+  {
     // build new path name using basepath
     basefile = flt_path_basefile(newextref->name);
     if ( basefile )
@@ -728,9 +734,24 @@ FLT_RECORD_READER(flt_reader_extref)
       else
         strcpy(ctx->tmpbuff,newextref->name);
     }
-    newextref->of->context = ctx;
-    if ( flt_load_from_filename( ctx->tmpbuff, newextref->of, ctx->opts) != FLT_OK )
-      flt_safefree(newextref->of);
+    
+    // check if reference has been loaded already
+    newextref->of = (struct flt*)flt_dict_get(ctx->dict, ctx->tmpbuff);
+    if ( !newextref->of ) // does not exist, creates one, loads it and put into dict
+    {
+      newextref->of = (flt*)flt_calloc(1,sizeof(flt));
+      flt_mem_check(newextref->of,of->errcode);
+      newextref->of->ctx = ctx; // reuse context dict
+      if ( flt_load_from_filename( ctx->tmpbuff, newextref->of, opts) == FLT_OK )
+        flt_dict_insert(ctx->dict, ctx->tmpbuff, newextref->of);
+      else
+        flt_safefree(newextref->of);
+    }
+    else // file already loaded. uses and inc reference count
+    {
+      flt_atomic_inc(&newextref->of->ref);
+    }
+
     flt_safefree(basefile);
   }
   return readbytes;
@@ -740,7 +761,8 @@ FLT_RECORD_READER(flt_reader_extref)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_pal_vertex)
 {
-  flt_context* ctx=(flt_context*)of->context;
+  flt_context* ctx=of->ctx;
+  flt_opts* opts=ctx->opts;
   int readbytes, vmaxcount;
   fltu32 vtxsize;
 
@@ -750,18 +772,18 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
   readbytes = oh->length - sizeof(flt_op) - 4;
 
   // read vertices from palette?
-  if ( ctx->opts->palflags & FLT_OPT_PAL_VERTEX )
+  if ( opts->palflags & FLT_OPT_PAL_VERTEX )
   {
     // no of vertices. Use smallest vtx record to have an upper bound of no. vertices in mem/file
     vmaxcount -= sizeof(flt_op)+4;
     vmaxcount /= 36; 
 
-    vtxsize = flt_vtx_size(ctx->opts->vtxstream);
+    vtxsize = flt_vtx_size(opts->vtxstream);
 
     // uses the source vertex format (is variable format)?
-    if ( !vtxsize || (ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE) )
+    if ( !vtxsize || (opts->palflags & FLT_OPT_PAL_VTX_SOURCE) )
     {
-      ctx->opts->palflags |= FLT_OPT_PAL_VTX_SOURCE;
+      opts->palflags |= FLT_OPT_PAL_VTX_SOURCE;
       // allocates for the biggest format size to be sure we have enough memory
       of->pal->vtx = (fltu8*)flt_malloc( vmaxcount * 48 ); 
       flt_mem_check(of->pal->vtx, of->errcode);
@@ -786,7 +808,7 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_vtx_color)
 {
-  flt_context* ctx=(flt_context*)of->context;
+  flt_context* ctx=of->ctx;
   int readbytes=oh->length-sizeof(flt_op);  
   double* coords; 
   flti32* abgr;
@@ -806,7 +828,7 @@ FLT_RECORD_READER(flt_reader_vtx_color)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_vtx_color_normal)
 {
-  flt_context* ctx=(flt_context*)of->context;
+  flt_context* ctx=of->ctx;
   int readbytes=oh->length-sizeof(flt_op);  
   double* coords;
   float* normal;
@@ -828,7 +850,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_vtx_color_uv)
 {
-  flt_context* ctx=(flt_context*)of->context;
+  flt_context* ctx=of->ctx;
   int readbytes=oh->length-sizeof(flt_op);  
   double* coords;
   float* uv;
@@ -850,7 +872,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_uv)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_vtx_color_normal_uv)
 {
-  flt_context* ctx=(flt_context*)of->context;
+  flt_context* ctx=of->ctx;
   int readbytes=oh->length-sizeof(flt_op);  
   double* coords;
   float* uv;
@@ -875,7 +897,8 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal_uv)
 void flt_release(flt* of)
 {
   flt_pal_tex* pt, *pn;
-
+  
+  //printf( "Releasing %s\n", of->filename );
   if ( !of ) return;
   // header
   flt_safefree(of->filename);
@@ -889,14 +912,27 @@ void flt_release(flt* of)
     flt_safefree(of->pal->vtx);
     if ( (int)of->pal->vtx_offsets<-512 || (int)of->pal->vtx_offsets>0 ) 
       flt_safefree(of->pal->vtx_offsets); // be sure it does not encode a fixed vertex size (negative)
+
     flt_safefree(of->pal);
   }
 
   // hierarchy
   flt_release_hie_flat(of->hie_flat);
+  flt_safefree(of->hie_flat);
   flt_release_hie_full(of->hie_full);
   flt_safefree(of->hie_full);
-  flt_safefree(of->hie_flat);
+
+  // context
+  if ( of->ctx )
+  {
+    if ( of->ctx->dict && flt_atomic_dec(&of->ctx->dict->ref)<=0 )
+    {
+      flt_dict_destroy(&of->ctx->dict);
+      of->ctx->dict = 0;
+    }
+    flt_safefree(of->ctx->basepath);
+    flt_safefree(of->ctx);
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -910,8 +946,12 @@ void flt_release_hie_flat(flt_hie_flat* flat)
   ec=en=flat->extref_head; 
   while (ec)
   { 
-    en=ec->next;     
-    flt_release(ec->of); flt_safefree(ec->of); // resolved extref if applies
+    en=ec->next;
+    if ( ec->of && flt_atomic_dec(&ec->of->ref)<=0 )
+    {
+      flt_release(ec->of); 
+      flt_safefree(ec->of);
+    }
     flt_free(ec); 
     ec=en; 
   }
@@ -928,7 +968,7 @@ void flt_release_hie_full(flt_hie_full* full)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void flt_node_extref_add(flt* of, flt_node_extref* node)
 {
-  flt_context* ctx = (flt_context*)of->context;
+  flt_context* ctx = of->ctx;
   if ( of->hie_full )
   {
 
@@ -948,16 +988,17 @@ void flt_node_extref_add(flt* of, flt_node_extref* node)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void flt_vtx_write(flt* of, fltu16* stream, double* xyz, fltu32 abgr, float* uv, float* normal)
 {
-  flt_context* ctx=(flt_context*)of->context;  
+  flt_context* ctx=of->ctx;  
+  flt_opts* opts=ctx->opts;
   fltu8* vertex;
 
-  if ( !stream ) stream = ctx->opts->vtxstream;
+  if ( !stream ) stream = opts->vtxstream;
   // offset to current vertex
   vertex = of->pal->vtx + ctx->vtx_offset;
 
   // if format source used, update array and use the source stream
   // use source. gets offset to next vertex, saves pos+color, advance offset accordingly
-  if ( ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE )
+  if ( opts->palflags & FLT_OPT_PAL_VTX_SOURCE )
     of->pal->vtx_offsets[of->pal->vtx_count] = ctx->vtx_offset;
 
   ctx->vtx_offset += flt_vtx_write_sem(vertex, stream, xyz, abgr, normal, uv);   
@@ -967,10 +1008,9 @@ void flt_vtx_write(flt* of, fltu16* stream, double* xyz, fltu32 abgr, float* uv,
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void flt_vtx_write_PC(flt* of, double* xyz, fltu32 abgr)
 {
-  flt_context* ctx=(flt_context*)of->context;  
   // stream for POSITION/COLOR
   static fltu16 srcstream[]={1536, 4376, 0};
-  fltu16* stream= ( ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : NULL;
+  fltu16* stream= ( of->ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : NULL;
   flt_vtx_write(of,stream,xyz,abgr,flt_zerovec, flt_zerovec);
 }
 
@@ -978,20 +1018,18 @@ void flt_vtx_write_PC(flt* of, double* xyz, fltu32 abgr)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void flt_vtx_write_PCN(flt* of, double* xyz, fltu32 abgr, float* normal)
 { 
-  flt_context* ctx=(flt_context*)of->context;  
   // stream for POSITION/COLOR/NORMAL
   static fltu16 srcstream[]={1536, 4376, 8988, 0};
-  fltu16* stream= ( ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : NULL;
+  fltu16* stream= ( of->ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : NULL;
   flt_vtx_write(of,stream,xyz,abgr,flt_zerovec,normal);
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void flt_vtx_write_PCT(flt* of, double* xyz, fltu32 abgr, float* uv)
 {
-  flt_context* ctx=(flt_context*)of->context;  
   // stream for POSITION/COLOR/UV0
   static fltu16 srcstream[]={1536, 4376, 12828, 0};
-  fltu16* stream= (ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : NULL;
+  fltu16* stream= (of->ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : NULL;
   flt_vtx_write(of,stream,xyz,abgr,uv,flt_zerovec);
 }
 
@@ -999,10 +1037,9 @@ void flt_vtx_write_PCT(flt* of, double* xyz, fltu32 abgr, float* uv)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void flt_vtx_write_PCNT(flt* of, double* xyz, fltu32 abgr, float* uv, float* normal)
 {
-  flt_context* ctx=(flt_context*)of->context;  
   // stream for POSITION/COLOR/NORMAL/UV0
   static fltu16 srcstream[]={1536, 4376, 8988, 12840, 0};
-  fltu16* stream=( ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : NULL;
+  fltu16* stream=( of->ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : NULL;
   flt_vtx_write(of,stream,xyz,abgr,uv,normal);
 }
 
@@ -1195,6 +1232,7 @@ const char* flt_get_err_reason(int errcode)
   case FLT_ERR_VERSION: return "Version error. Max. supported version FLT_GREATER_SUPPORTED_VERSION";
   case FLT_ERR_MEMOUT : return "Running out of memory. Malloc returns null";
   case FLT_ERR_READBEYOND_REC: return "Read beyond record. Skip bytes is negative. Version error?";
+  case FLT_ERR_ALREADY: return "Already parsed and registered in the context dictionary";
   }
 #else
   switch ( errcode )
@@ -1204,6 +1242,7 @@ const char* flt_get_err_reason(int errcode)
   case FLT_ERR_VERSION: return "Version unsupported";
   case FLT_ERR_MEMOUT : return "Out of mem";
   case FLT_ERR_READBEYOND_REC: return "Read beyond record"; 
+  case FLT_ERR_ALREADY: return "Already parsed";
   }
 #endif
   return "Unknown";
@@ -1307,20 +1346,21 @@ char* flt_path_base(const char* filename)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FILE* flt_fopen(const char* filename, flt* of)
 {
-  flt_context* ctx=(flt_context*)of->context;  
+  flt_context* ctx=of->ctx;  
+  flt_opts* opts=ctx->opts;
   fltu32 i=0;  
   char* basefile;
   const char* spath;
 
   strcpy(ctx->tmpbuff,filename);
   ctx->f = fopen(ctx->tmpbuff,"rb");
-  if( !ctx->f && ctx->opts->search_paths ) // failed original, use search paths if valid
+  if( !ctx->f && opts->search_paths ) // failed original, use search paths if valid
   {
     // get the base file name
     basefile = flt_path_basefile(filename);
     while ( basefile ) // infinite if base file, but breaking in
     {
-      spath = ctx->opts->search_paths[i];
+      spath = opts->search_paths[i];
       if ( !spath ) break;
       *ctx->tmpbuff='\0'; // empty the target
       strcat(ctx->tmpbuff, spath);
@@ -1386,7 +1426,7 @@ int flt_path_endsok(const char* filename)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 //                                DICTIONARY
 ////////////////////////////////////////////////////////////////////////////////////////////////
-// djb2 (http://www.cse.yorku.ca/~oz/hash.html)
+// djb2
 unsigned long flt_dict_hash(const unsigned char* str) 
 {
   unsigned long hash = 5381;
@@ -1426,6 +1466,7 @@ void flt_dict_destroy(flt_dict** dict)
       n=nn;
     }
   }
+  flt_safefree((*dict)->hasht);
   if ( (*dict)->cs ) 
   {
     flt_critsec_leave((*dict)->cs);
@@ -1437,6 +1478,7 @@ void flt_dict_destroy(flt_dict** dict)
 void* flt_dict_get(flt_dict* dict, const char* key)
 {
   flt_dict_node *n;
+  void* retval=0;
   const unsigned long hashk = flt_dict_hash((const unsigned char*)key);
   const int entry = hashk % dict->n_entries;
 
@@ -1444,11 +1486,11 @@ void* flt_dict_get(flt_dict* dict, const char* key)
   n = dict->hasht[entry];  
   while(n)
   {
-    if ( n->keyhash == hashk ) return n->value;
+    if ( n->keyhash == hashk ){ retval=n->value; break; }
     n=n->next;
   }
   if ( dict->cs ) flt_critsec_leave(dict->cs);
-  return 0;
+  return retval;
 }
 
 flt_dict_node* flt_dict_create_node(const char* key, unsigned long keyhash, void* value)
@@ -1467,7 +1509,7 @@ int flt_dict_insert(flt_dict* dict, const char* key, void* value)
   unsigned long hashk;
   int entry;
 
-  if ( !value ) return 0; // must insert non-null value.  
+  if ( !value || !dict ) return 0; // must insert non-null value.  
   hashk = flt_dict_hash((const unsigned char*)key);
   if ( dict->cs ) flt_critsec_enter(dict->cs); // acquire
   entry = hashk % dict->n_entries;
@@ -1484,11 +1526,11 @@ int flt_dict_insert(flt_dict* dict, const char* key, void* value)
     while (n)
     {
       // same keyhash and same keyname (just in case two different string with same hashkey)
-      if ( n->keyhash == hashk && strcmp(n->key,key)==0 ) { n->value = value; break; }
+      if ( n->keyhash == hashk && strcmp(n->key,key)==0 ) { n->value = value; ln=0; break; }
       ln=n;
       n=n->next;
     }    
-    ln->next = flt_dict_create_node(key,hashk,value);
+    if (ln) ln->next = flt_dict_create_node(key,hashk,value);
   }
 
   if ( dict->cs ) flt_critsec_leave(dict->cs);
@@ -1506,12 +1548,8 @@ typedef struct flt_critsec
 
 flt_critsec* flt_critsec_create()
 {
-  flt_critsec* cs;
-  CRITICAL_SECTION _cs={0};
-  if (!InitializeCriticalSectionAndSpinCount(&_cs,0x00000400))
-    return 0;
-  cs=(flt_critsec*)flt_malloc(sizeof(flt_critsec));
-  cs->cs = _cs;
+  flt_critsec* cs=(flt_critsec*)flt_malloc(sizeof(flt_critsec));
+  InitializeCriticalSection(&cs->cs);
   return cs;
 }
 
@@ -1531,18 +1569,18 @@ void flt_critsec_leave(flt_critsec* cs)
   LeaveCriticalSection(&cs->cs);
 }
 
-long flt_atomic_dec(long* c)
+long flt_atomic_dec(fltatom32* c)
 {
   return InterlockedDecrement(c);
 }
 
-long flt_atomic_inc(long* c)
+long flt_atomic_inc(fltatom32* c)
 {
   return InterlockedIncrement(c);
 }
 
 
-#else // perhaps pthread to the rescue?
+#else // perhaps pthread/gcc builtings to the rescue?
 
 
 typedef struct flt_critsec
@@ -1572,6 +1610,16 @@ void flt_critsec_enter(flt_critsec* cs)
 void flt_critsec_leave(flt_critsec* cs)
 {
   pthread_mutex_unlock(&cs->mtx);
+}
+
+long flt_atomic_dec(fltatom32* c)
+{
+  return __sync_sub_and_fetch(c,1);
+}
+
+long flt_atomic_inc(fltatom32* c)
+{
+  return __sync_add_and_fetch(c,1);
 }
 #endif
 
@@ -1635,4 +1683,9 @@ return opcode==3 || (opcode>=6 && opcode<=9) || (opcode>=12 && opcode<=13)
 */
 
 #endif
+
+#ifdef _MSC_VER
+#pragma warning(default:4244 4100 4996 4706 4091)
+#endif
+
 #endif

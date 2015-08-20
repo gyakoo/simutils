@@ -9,7 +9,7 @@ solution "fltview"
   	project "fltview"
 		kind "ConsoleApp"
 		language "C++"
-		files { "fltview.c", "../../flt/flt.h" }
+		files { "fltview.cc", "../../flt/flt.h" }
 		includedirs { "./", "../../flt/" }		
 	 		
 		configuration { "windows" }            
