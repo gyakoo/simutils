@@ -1,8 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef _MSC_VER
-#include <windows.h>
-#endif
 #define FLT_NO_OPNAMES
 #define FLT_IMPLEMENTATION
 #include <flt.h>
@@ -191,5 +188,6 @@ int main(int argc, const char** argv)
   //read_with_callbacks_and_resolve("../../../data/camp/master.flt");
   read_with_callbacks_and_resolve("../../../data/camp/master.flt");
   //read_with_search_paths();
+
   return 0;
 }
