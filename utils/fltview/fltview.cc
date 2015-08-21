@@ -14,7 +14,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#define FLT_NO_OPNAMES
+//#define FLT_NO_OPNAMES
 #define FLT_IMPLEMENTATION
 #include <flt.h>
 #include <cstdint>
@@ -97,6 +97,7 @@ struct fltThreadPool
 double fltGetTime();
 bool fltExtensionIsImg(const char* filename);
 bool fltExtensionIs(const char* filename, const char* ext);
+void fltPrint(flt* of, int d, std::set<uint64_t>& done);
 
 int fltCallbackExtRef(flt_node_extref* extref, flt* of, void* userdata)
 {
@@ -115,7 +116,6 @@ void read_with_callbacks_mt(const char* filename, fltThreadPool* tp)
   double t0;
   flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
   flt* of=(flt*)flt_calloc(1,sizeof(flt));
-  int err;
 
 //   fltu16 vtxstream[4]={ 0 };
 //   vtxstream[0]=flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12); 
@@ -125,7 +125,7 @@ void read_with_callbacks_mt(const char* filename, fltThreadPool* tp)
 
   // configuring read options
   opts->palflags =FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_SOURCE;
-  opts->hieflags = FLT_OPT_HIE_HEADER | FLT_OPT_HIE_FLAT | FLT_OPT_HIE_EXTREF;// | FLT_OPT_HIE_EXTREF_RESOLVE;
+  opts->hieflags = FLT_OPT_HIE_HEADER | FLT_OPT_HIE_FLAT | FLT_OPT_HIE_EXTREF | FLT_OPT_HIE_OBJECT;// | FLT_OPT_HIE_EXTREF_RESOLVE;
   opts->cb_extref = fltCallbackExtRef;
   opts->cb_user_data = tp;
 
@@ -139,8 +139,10 @@ void read_with_callbacks_mt(const char* filename, fltThreadPool* tp)
     std::this_thread::sleep_for(std::chrono::milliseconds(50));    
   } while ( !tp->tasks.empty() || tp->workingTasks>0 );
 
+  std::set<uint64_t> done;
+  fltPrint(of,0,done);
+
   printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
-  MessageBoxA(NULL,"continue","continue",MB_OK);
   flt_release(of);
   flt_safefree(of);
   flt_safefree(opts);
@@ -191,7 +193,6 @@ void fltThreadPool::runcode()
   {
     if ( getNextTask(&task) )
     {
-      //OutputDebugStringA("Reading: " );OutputDebugStringA(task.filename.c_str());OutputDebugStringA("\n");
       ++workingTasks;
       try
       {
@@ -201,7 +202,6 @@ void fltThreadPool::runcode()
         OutputDebugStringA("Exception\n");
       }
       --workingTasks;
-      //OutputDebugStringA("Done: " );OutputDebugStringA(task.filename.c_str());OutputDebugStringA("\n");
     }
     else
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -223,10 +223,6 @@ void fltThreadPool::addNewTask(const fltThreadTask& task)
   if ( task.type==fltThreadTask::TASK_IMG && !fltExtensionIsImg(task.filename.c_str()) )
     return;
 
-  if ( task.of->ctx && !task.of->ctx->dict )
-  {
-    int a=0;
-  }
   // check if file is done already
   {
     std::lock_guard<std::mutex> lock(mtxFiles);
@@ -256,9 +252,7 @@ void fltThreadTask::runTask(fltThreadPool* tp)
 {
   switch( type )
   {
-  case TASK_FLT:
-    flt_load_from_filename(filename.c_str(), of, opts);
-    break;
+  case TASK_FLT: flt_load_from_filename(filename.c_str(), of, opts); break;
   case TASK_IMG: break;
   }
 }
@@ -296,13 +290,94 @@ double fltGetTime()
 #endif
 }
 
+// void testdict(const char* fname)
+// {
+//   char line[512];
+//   std::vector<std::string> words; words.reserve(30000);
+//   FILE* f = fopen(fname, "rt");
+//   if ( !f ) return;
+//   while (fgets(line,512,f))
+//     words.push_back(line);
+//   fclose(f);
+//   const int niters=300;
+// 
+//   double t0 = fltGetTime();
+//   std::vector<std::string>::iterator it;
+//   for (int j=0;j<niters;++j)
+//   {
+//     std::map<std::string,void*> stdhash;
+//     size_t i=0;
+//     for ( it=words.begin(); it != words.end(); ++it, ++i)
+//       stdhash[*it] = (void*)i;
+//   }
+//   printf( "stdhash: %g sec\n", (fltGetTime()-t0)/niters/1000.0);
+// 
+//   t0 = fltGetTime();
+//   for (int j=0;j<niters;++j)
+//   {
+//     flt_dict* dict;
+//     flt_dict_create(49157,0,&dict);
+//     size_t i=0;
+//     for ( it=words.begin(); it != words.end(); ++it, ++i)
+//       flt_dict_insert(dict,it->c_str(),(void*)i);
+//     flt_dict_destroy(&dict);
+//   }
+//   printf( "flt_dict: %g sec\n", (fltGetTime()-t0)/niters/1000.0);
+// }
+// 
+void fltIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
+
+void fltPrint(flt* of, int d, std::set<uint64_t>& done)
+{
+  fltIndent(d); printf( "%s\n", of->filename);
+  fltIndent(d); printf( "Records: %d\n", of->ctx->rec_count );
+  if ( of->pal )
+  {
+    fltIndent(d); printf( "Vertices: %d\n", of->pal->vtx_count);
+    fltIndent(d); printf( "Textures: %d\n", of->pal->tex_count);
+    flt_pal_tex* tex = of->pal->tex_head;
+    while (tex)
+    {
+      fltIndent(d+1); printf( "%s\n", tex->name );
+      tex = tex->next;
+    } 
+  }
+  
+  if ( of->hie_flat )
+  {
+    fltIndent(d); printf( "Objects: %d\n", of->hie_flat->obj_count );
+    flt_node_object* obj = of->hie_flat->obj_head;
+    while ( obj )
+    {
+      fltIndent(d+1); printf( "%s\n", obj->name );
+      obj = obj->next;
+    }
+
+    fltIndent(d); printf( "Ext.References: %d\n", of->hie_flat->extref_count );
+    flt_node_extref* extref = of->hie_flat->extref_head;
+    while ( extref )
+    {
+      if ( done.find( (uint64_t)extref->of ) == done.end() )
+      {
+        fltPrint(extref->of, d+1, done);
+        done.insert( (uint64_t)extref->of );
+      }
+      extref= extref->next;
+    }
+  }
+}
+
 int main(int argc, const char** argv)
 {
   fltThreadPool tp;
   tp.ctx.numThreads = std::thread::hardware_concurrency();
   tp.init();
-  //read_with_callbacks_mt("../../../data/camp/master.flt", &tp);
-  read_with_resolve("../../../data/camp/master.flt");
+  read_with_callbacks_mt("../../../data/utah/master.flt", &tp);
+  //read_with_resolve("../../../data/camp/master.flt");
   tp.deinit();
+
+  //testdict("../../../data/words.txt");
+  
+  MessageBoxA(NULL,"continue","continue",MB_OK);
   return 0;
 }
