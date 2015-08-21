@@ -178,22 +178,26 @@ extern "C" {
   typedef int (*flt_callback_extref)(struct flt_node_extref* extref, struct flt* of, void* user_data);
   
 
-  // Load openflight information into of with given options
+    // Load openflight information into of with given options
   int flt_load_from_filename(const char* filename, struct flt* of, struct flt_opts* opts);
 
-  // Deallocates all memory
+    // If the extref is already loaded, references it (inc ref count) and returns NULL. 
+    // Otherwise, extref not loaded yet, creates a new flt for it and returns the pathname for the extref.
+  char* flt_resolve_extref(struct flt_node_extref* extref, struct flt* of);
+
+    // Deallocates all memory
   void flt_release(struct flt* of);
 
-  // Returns reason of the error code. Define FLT_LONG_ERR_MESSAGES for longer texts.
+    // Returns reason of the error code. Define FLT_LONG_ERR_MESSAGES for longer texts.
   const char* flt_get_err_reason(int errcode);
 
-  // Encodes a vertex stream semantic word with the semantic and the offset
+    // Encodes a vertex stream semantic word with the semantic and the offset
   fltu16 flt_vtx_stream_enc(fltu8 semantic, fltu8 offset, fltu8 size);
 
-  // Decodes a vertex stream semantic word
+    // Decodes a vertex stream semantic word
   void flt_vtx_stream_dec(fltu16 stream, fltu8* semantic, fltu8* offset, fltu8* size);
 
-  // Computes the size of a vertex stream in bytes
+    // Computes the size of a vertex stream in bytes
   fltu32 flt_vtx_size(fltu16* vstr);
 
   // Parsing options
@@ -337,12 +341,13 @@ extern "C" {
 ////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef FLT_IMPLEMENTATION
 
-#if defined(flt_malloc) && defined(flt_free) && defined(flt_calloc) && defined(flt_strdup)
-// ok
-#elif !defined(flt_malloc) && !defined(flt_free) && !defined(flt_calloc) && !defined(flt_strdup)
-// ok
+// Memory functions override
+#if defined(flt_malloc) && defined(flt_free) && defined(flt_calloc) && defined(flt_strdup) && defined(flt_realloc)
+// ok, all defined
+#elif !defined(flt_malloc) && !defined(flt_free) && !defined(flt_calloc) && !defined(flt_strdup) && !defined(flt_realloc)
+// ok, none defined
 #else
-#error "Must define all or none of flt_malloc, flt_free, flt_calloc"
+#error "Must define all or none of flt_malloc, flt_free, flt_calloc, flt_realloc, flt_strdup"
 #endif
 
 #ifndef flt_malloc
@@ -356,6 +361,9 @@ extern "C" {
 #endif
 #ifndef flt_strdup
 #define flt_strdup(s) strdup(s)
+#endif
+#ifndef flt_realloc
+#define flt_realloc(p,sz) realloc(p,sz)
 #endif
 
 #define flt_safefree(p) { if (p){ flt_free(p); (p)=0;} }
@@ -560,7 +568,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   ctx->f = flt_fopen(filename, of);
   if ( !ctx->f ) return flt_err(FLT_ERR_FOPEN, of);
 
-  printf( "Reading \"%s\"\n", of->filename);
+  //printf( "Reading \"%s\"\n", of->filename);
 
   // configuring reading
   optable[FLT_OP_HEADER] = flt_reader_header;         // always read header
@@ -609,6 +617,49 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
+char* flt_resolve_extref(struct flt_node_extref* extref, struct flt* of)
+{
+  char* basefile;
+  flt_context* oldctx = of->ctx;
+  if ( !extref || !of ) 
+    return NULL;
+
+  // Creates the full path for the external reference (uses same base path as parent)
+  basefile = flt_path_basefile(extref->name);  
+  if ( basefile )
+  {
+    *oldctx->tmpbuff='\0'; // thread-safety: resolve has to be called from parent thread who found the extref
+    if ( oldctx->basepath )
+    {
+      strcat(oldctx->tmpbuff, oldctx->basepath );
+      if ( !flt_path_endsok(oldctx->basepath) ) strcat(oldctx->tmpbuff, "/");
+      strcat(oldctx->tmpbuff, basefile);
+    }
+    else
+      strcpy(oldctx->tmpbuff,extref->name);
+  }
+
+  // check if reference has been loaded already
+  extref->of = (struct flt*)flt_dict_get(of->ctx->dict, oldctx->tmpbuff);
+  if ( !extref->of ) // does not exist, creates one, register in dict and passes dict
+  {
+    extref->of = (flt*)flt_calloc(1,sizeof(flt));
+    extref->of->ctx = of->ctx; 
+    flt_dict_insert(of->ctx->dict, oldctx->tmpbuff, extref->of);
+    basefile = (char*)flt_realloc(basefile,strlen(oldctx->tmpbuff)+1);    
+    strcpy(basefile,oldctx->tmpbuff);
+  }
+  else 
+  {
+    // file already loaded. uses and inc reference count
+    flt_atomic_inc(&extref->of->ref);
+    flt_safefree(basefile);
+  }
+  return basefile;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_header)
 {
   flt_end_desc  desc[]={ 
@@ -638,7 +689,7 @@ FLT_RECORD_READER(flt_reader_header)
     // if storing header, read it entirely
     of->header = (flt_header*)flt_malloc(sizeof(flt_header));
     flt_mem_check(of->header, of->errcode);
-    readbytes -= fread(of->header, 1, flt_min(readbytes,sizeof(flt_header)), ctx->f);  
+    readbytes -= (int)fread(of->header, 1, flt_min(readbytes,sizeof(flt_header)), ctx->f);  
     flt_swap_desc(of->header,desc); // endianess
     format_rev = of->header->format_rev;
   }
@@ -646,7 +697,7 @@ FLT_RECORD_READER(flt_reader_header)
   {
     // if no header needed, just read the version
     fseek(ctx->f,8,SEEK_CUR); readbytes-=8;
-    readbytes -= fread(&format_rev,1,4,ctx->f);
+    readbytes -= (int)fread(&format_rev,1,4,ctx->f);
     flt_swap32(&format_rev);
   }
 
@@ -675,7 +726,7 @@ FLT_RECORD_READER(flt_reader_pal_tex)
   flt_mem_check(newpt, of->errcode);
 
   readbytes = oh->length-sizeof(flt_op);
-  readbytes -= fread(newpt, 1, flt_min(readbytes,sizeof(flt_pal_tex)), ctx->f);
+  readbytes -= (int)fread(newpt, 1, flt_min(readbytes,sizeof(flt_pal_tex)), ctx->f);
   flt_swap_desc(newpt, desc);
   if ( opts->cb_texture ) 
     opts->cb_texture(newpt,of,opts->cb_user_data); // callback?
@@ -708,7 +759,7 @@ FLT_RECORD_READER(flt_reader_extref)
   flt_mem_check(newextref, of->errcode);
 
   readbytes = oh->length-sizeof(flt_op);
-  readbytes -= fread(newextref, 1, flt_min(readbytes,sizeof(flt_node_extref)), ctx->f);
+  readbytes -= (int)fread(newextref, 1, flt_min(readbytes,sizeof(flt_node_extref)), ctx->f);
   flt_swap_desc(newextref, desc);
 
   // add node (that'll take care of hierarchy)
@@ -720,39 +771,13 @@ FLT_RECORD_READER(flt_reader_extref)
   // if resolving external references...
   if (opts->hieflags & FLT_OPT_HIE_EXTREF_RESOLVE )
   {
-    // build new path name using basepath
-    basefile = flt_path_basefile(newextref->name);
+    basefile = flt_resolve_extref(newextref,of);
     if ( basefile )
     {
-      *ctx->tmpbuff='\0';
-      if ( ctx->basepath )
-      {
-        strcat(ctx->tmpbuff, ctx->basepath );
-        if ( !flt_path_endsok(ctx->basepath) ) strcat(ctx->tmpbuff, "/");
-        strcat(ctx->tmpbuff, basefile);
-      }
-      else
-        strcpy(ctx->tmpbuff,newextref->name);
-    }
-    
-    // check if reference has been loaded already
-    newextref->of = (struct flt*)flt_dict_get(ctx->dict, ctx->tmpbuff);
-    if ( !newextref->of ) // does not exist, creates one, loads it and put into dict
-    {
-      newextref->of = (flt*)flt_calloc(1,sizeof(flt));
-      flt_mem_check(newextref->of,of->errcode);
-      newextref->of->ctx = ctx; // reuse context dict
-      if ( flt_load_from_filename( ctx->tmpbuff, newextref->of, opts) == FLT_OK )
-        flt_dict_insert(ctx->dict, ctx->tmpbuff, newextref->of);
-      else
+      if ( flt_load_from_filename( basefile, newextref->of, opts) != FLT_OK )
         flt_safefree(newextref->of);
+      flt_safefree(basefile);
     }
-    else // file already loaded. uses and inc reference count
-    {
-      flt_atomic_inc(&newextref->of->ref);
-    }
-
-    flt_safefree(basefile);
   }
   return readbytes;
 }
@@ -814,7 +839,7 @@ FLT_RECORD_READER(flt_reader_vtx_color)
   flti32* abgr;
 
   // read data in
-  readbytes -= fread(ctx->tmpbuff,1,flt_min(readbytes,36),ctx->f);
+  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,36),ctx->f);
   coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   abgr=(flti32*)(ctx->tmpbuff+28); flt_swap32(abgr);
 
@@ -835,7 +860,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal)
   flti32* abgr;
 
   // read data in
-  readbytes -= fread(ctx->tmpbuff,1,flt_min(readbytes,52),ctx->f);
+  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,52),ctx->f);
   coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   normal=(float*)(ctx->tmpbuff+28); flt_swap32(normal); flt_swap32(normal+1); flt_swap32(normal+2);
   abgr=(flti32*)(ctx->tmpbuff+40); flt_swap32(abgr);
@@ -857,7 +882,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_uv)
   flti32* abgr;
 
   // read data in
-  readbytes -= fread(ctx->tmpbuff,1,flt_min(readbytes,40),ctx->f);
+  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,40),ctx->f);
   coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   uv=(float*)(ctx->tmpbuff+28); flt_swap32(uv); flt_swap32(uv+1);
   abgr=(flti32*)(ctx->tmpbuff+36); flt_swap32(abgr);
@@ -880,7 +905,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal_uv)
   flti32* abgr;
 
   // read data in
-  readbytes -= fread(ctx->tmpbuff,1,flt_min(readbytes,60),ctx->f);
+  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,60),ctx->f);
   coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   normal=(float*)(ctx->tmpbuff+28); flt_swap32(normal); flt_swap32(normal+1); flt_swap32(normal+2);
   uv=(float*)(ctx->tmpbuff+40); flt_swap32(uv); flt_swap32(uv+1);
@@ -1322,7 +1347,7 @@ fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 ab
 char* flt_path_base(const char* filename)
 {
   char *ret, *ptr;
-  int len;
+  size_t len;
   if ( !filename) return 0;
 
   len = strlen(filename);
@@ -1376,7 +1401,8 @@ FILE* flt_fopen(const char* filename, flt* of)
   // if open ok, saves correct filename and base path
   if ( ctx->f )
   {
-    of->filename = flt_strdup(ctx->tmpbuff);  
+    if ( !of->filename )
+      of->filename = flt_strdup(ctx->tmpbuff);  
     ctx->basepath = flt_path_base(ctx->tmpbuff);
   }
   return ctx->f;
@@ -1388,7 +1414,7 @@ FILE* flt_fopen(const char* filename, flt* of)
 char* flt_path_basefile(const char* filename)
 {
   const char *ptr;
-  int len;
+  size_t len;
 
   if ( !filename ) return NULL;
   len = strlen(filename);
@@ -1412,7 +1438,7 @@ char* flt_path_basefile(const char* filename)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 int flt_path_endsok(const char* filename)
 {
-  int len;
+  size_t len;
   const char* ptr;
 
   if ( !filename || !*filename ) return 0;

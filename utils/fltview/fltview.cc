@@ -98,32 +98,15 @@ double fltGetTime();
 bool fltExtensionIsImg(const char* filename);
 bool fltExtensionIs(const char* filename, const char* ext);
 
-int callback_extref(flt_node_extref* extref, flt* of, void* userdata)
+int fltCallbackExtRef(flt_node_extref* extref, flt* of, void* userdata)
 {
-  char* basefile = flt_path_basefile(extref->name);
-  std::string finalname; finalname.reserve(64);
-  if ( basefile )
+  char* finalname = flt_resolve_extref(extref,of);
+  if ( finalname )
   {
-    if ( of->ctx->basepath ) finalname+=of->ctx->basepath;
-    if ( !flt_path_endsok(of->ctx->basepath) ) finalname+="/";
-  }
-  finalname+=extref->name;
-
-  // check if reference has been loaded already
-  extref->of = (struct flt*)flt_dict_get(of->ctx->dict, finalname.c_str());
-  if ( !extref->of ) // does not exist, creates one, loads it and put into dict
-  {
-    extref->of = (flt*)flt_calloc(1,sizeof(flt));
-    extref->of->ctx = of->ctx;
-    flt_dict_insert(of->ctx->dict, finalname.c_str(), extref->of);
     fltThreadTask task(fltThreadTask::TASK_FLT, finalname, extref->of, of->ctx->opts); //  read ref in parallel
     reinterpret_cast<fltThreadPool*>(userdata)->addNewTask(task);
+    flt_safefree(finalname);
   }
-  else // file already loaded. uses and inc reference count
-  {
-    flt_atomic_inc(&extref->of->ref);
-  }
-  flt_safefree(basefile);
   return 1;
 }
 
@@ -143,7 +126,7 @@ void read_with_callbacks_mt(const char* filename, fltThreadPool* tp)
   // configuring read options
   opts->palflags =FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_SOURCE;
   opts->hieflags = FLT_OPT_HIE_HEADER | FLT_OPT_HIE_FLAT | FLT_OPT_HIE_EXTREF;// | FLT_OPT_HIE_EXTREF_RESOLVE;
-  opts->cb_extref = callback_extref;
+  opts->cb_extref = fltCallbackExtRef;
   opts->cb_user_data = tp;
 
   // actual read
@@ -318,8 +301,8 @@ int main(int argc, const char** argv)
   fltThreadPool tp;
   tp.ctx.numThreads = std::thread::hardware_concurrency();
   tp.init();
-  read_with_callbacks_mt("../../../data/camp/master.flt", &tp);
-  //read_with_resolve("../../../data/camp/master.flt");
+  //read_with_callbacks_mt("../../../data/camp/master.flt", &tp);
+  read_with_resolve("../../../data/camp/master.flt");
   tp.deinit();
   return 0;
 }
