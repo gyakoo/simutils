@@ -97,7 +97,7 @@ struct fltThreadPool
 double fltGetTime();
 bool fltExtensionIsImg(const char* filename);
 bool fltExtensionIs(const char* filename, const char* ext);
-void fltPrint(flt* of, int d, std::set<uint64_t>& done);
+void fltPrint(flt* of, int d, std::set<uint64_t>& done, void* ctx);
 
 int fltCallbackExtRef(flt_node_extref* extref, flt* of, void* userdata)
 {
@@ -125,7 +125,7 @@ void read_with_callbacks_mt(const char* filename, fltThreadPool* tp)
 
   // configuring read options
   opts->palflags =FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_SOURCE;
-  opts->hieflags = FLT_OPT_HIE_HEADER | FLT_OPT_HIE_FLAT | FLT_OPT_HIE_EXTREF | FLT_OPT_HIE_OBJECT;// | FLT_OPT_HIE_EXTREF_RESOLVE;
+  opts->hieflags = FLT_OPT_HIE_HEADER | FLT_OPT_HIE_ALL;// | FLT_OPT_HIE_EXTREF_RESOLVE;
   opts->cb_extref = fltCallbackExtRef;
   opts->cb_user_data = tp;
 
@@ -140,9 +140,12 @@ void read_with_callbacks_mt(const char* filename, fltThreadPool* tp)
   } while ( !tp->tasks.empty() || tp->workingTasks>0 );
 
   std::set<uint64_t> done;
-  fltPrint(of,0,done);
+  int counterctx=0;
+  //fltPrint(of,0,done, &counterctx);
 
+  printf( "Total nodes all: %d\n", counterctx);
   printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
+  MessageBoxA(NULL,"continue","continue",MB_OK);
   flt_release(of);
   flt_safefree(of);
   flt_safefree(opts);
@@ -162,7 +165,7 @@ void read_with_resolve(const char* filename)
 
   // configuring read options
   opts->palflags = 0;//FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_SOURCE;
-  opts->hieflags = /*FLT_OPT_HIE_HEADER | */FLT_OPT_HIE_FLAT | FLT_OPT_HIE_EXTREF | FLT_OPT_HIE_EXTREF_RESOLVE;
+  opts->hieflags = /*FLT_OPT_HIE_HEADER | */ FLT_OPT_HIE_ALL | FLT_OPT_HIE_EXTREF_RESOLVE;
 
   // actual read
   t0=fltGetTime();
@@ -327,10 +330,11 @@ double fltGetTime()
 // 
 void fltIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
 
-void fltPrint(flt* of, int d, std::set<uint64_t>& done)
+void fltPrint(flt* of, int d, std::set<uint64_t>& done, void* ctx)
 {
   fltIndent(d); printf( "%s\n", of->filename);
   fltIndent(d); printf( "Records: %d\n", of->ctx->rec_count );
+  if ( of->hie ) { fltIndent(d); printf( "Nodes: %d\n", of->hie->node_count); *(int*)ctx += of->hie->node_count; }
   if ( of->pal )
   {
     fltIndent(d); printf( "Vertices: %d\n", of->pal->vtx_count);
@@ -343,23 +347,16 @@ void fltPrint(flt* of, int d, std::set<uint64_t>& done)
     } 
   }
   
-  if ( of->hie_flat )
+  if ( of->hie )
   {
-    fltIndent(d); printf( "Objects: %d\n", of->hie_flat->obj_count );
-    flt_node_object* obj = of->hie_flat->obj_head;
-    while ( obj )
-    {
-      fltIndent(d+1); printf( "%s\n", obj->name );
-      obj = obj->next;
-    }
-
-    fltIndent(d); printf( "Ext.References: %d\n", of->hie_flat->extref_count );
-    flt_node_extref* extref = of->hie_flat->extref_head;
+    
+    fltIndent(d); printf( "Ext.References: %d\n", of->hie->extref_count );
+    flt_node_extref* extref = of->hie->extref_head;
     while ( extref )
     {
       if ( done.find( (uint64_t)extref->of ) == done.end() )
       {
-        fltPrint(extref->of, d+1, done);
+        fltPrint(extref->of, d+1, done,ctx);
         done.insert( (uint64_t)extref->of );
       }
       extref= extref->next;
@@ -372,12 +369,11 @@ int main(int argc, const char** argv)
   fltThreadPool tp;
   tp.ctx.numThreads = std::thread::hardware_concurrency();
   tp.init();
-  read_with_callbacks_mt("../../../data/utah/master.flt", &tp);
+  read_with_callbacks_mt("../../../data/camp/master.flt", &tp);
   //read_with_resolve("../../../data/camp/master.flt");
   tp.deinit();
 
   //testdict("../../../data/words.txt");
   
-  MessageBoxA(NULL,"continue","continue",MB_OK);
   return 0;
 }

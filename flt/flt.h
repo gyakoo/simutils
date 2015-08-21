@@ -45,6 +45,7 @@ DOCUMENTATION
 - Define the supported version in FLT_VERSION. Maximum supported version is FLT_GREATER_SUPPORTED_VERSION
 - Define FLT_NO_MEMOUT_CHECK to skip out-of-mem error
 - Define FLT_HASHTABLE_SIZE for a different default hash table size.
+- Define FLT_STACKARRAY_SIZE for a different default stack array size (when passing flt_opts.stacksize=0)
 
 (Additional info)
 - This library is thread-safe, all the data is in stack. If there's some static, it should be read-only const
@@ -68,8 +69,9 @@ DOCUMENTATION
 #include <Windows.h>
 #pragma warning(disable:4244 4100 4996 4706 4091)
 #endif
+
 /* 
-Version check
+ * Error codes
 */
 #define FLT_OK 0
 #define FLT_ERR_FOPEN 1
@@ -110,8 +112,8 @@ Version check
 
 //hierarchy/node flags (filter parsing of nodes and type of hierarchy)
 #define FLT_OPT_HIE_HEADER        (1<<0) // read header
-#define FLT_OPT_HIE_FLAT          (1<<1) // flat hierarchy (if skipped, will use full)
-#define FLT_OPT_HIE_GROUP         (1<<2)
+#define FLT_OPT_HIE_NO_NAMES      (1<<1) // don't store names
+#define FLT_OPT_HIE_GROUP         (1<<2) // node first
 #define FLT_OPT_HIE_OBJECT        (1<<3)
 #define FLT_OPT_HIE_MESH          (1<<4)
 #define FLT_OPT_HIE_LIGHTPNT      (1<<5)
@@ -128,7 +130,8 @@ Version check
 #define FLT_OPT_HIE_TEXT          (1<<16)
 #define FLT_OPT_HIE_SWITCH        (1<<17)
 #define FLT_OPT_HIE_CAT           (1<<18)
-#define FLT_OPT_HIE_CURVE         (1<<19)
+#define FLT_OPT_HIE_CURVE         (1<<19) // node last
+#define FLT_OPT_HIE_ALL           (0x0ffffe) // from bit 1 to 19
 #define FLT_OPT_HIE_EXTREF_RESOLVE (1<<20) // unless this bit is set, ext refs aren't resolved
 
 // Vertex semantic (you can use the original vertex format or force another, see flt_opts)
@@ -140,6 +143,7 @@ Version check
 // FLT Record Opcodes
 #define FLT_OP_DONTCARE 0
 #define FLT_OP_HEADER 1
+#define FLT_OP_GROUP 2
 #define FLT_OP_OBJECT 4
 #define FLT_OP_PUSHLEVEL 10
 #define FLT_OP_POPLEVEL 11
@@ -156,7 +160,16 @@ Version check
 #define FLT_OP_VERTEX_COLOR_NORMAL 69
 #define FLT_OP_VERTEX_COLOR_NORMAL_UV 70
 #define FLT_OP_VERTEX_COLOR_UV 71
+#define FLT_OP_LOD 73
+#define FLT_OP_MESH 84
 #define FLT_OP_MAX 154
+
+// FLT Node types
+#define FLT_NODE_BASE   0
+#define FLT_NODE_GROUP  FLT_OP_GROUP
+#define FLT_NODE_OBJECT FLT_OP_OBJECT
+#define FLT_NODE_MESH   FLT_OP_MESH
+#define FLT_NODE_LOD    FLT_OP_LOD
 
 #ifdef __cplusplus
 extern "C" {
@@ -176,11 +189,11 @@ extern "C" {
   typedef struct flt_pal_tex;
   typedef struct flt_node_extref;
   typedef struct flt_node_object;
+  typedef struct flt_node_group;
   typedef int (*flt_callback_texture)(struct flt_pal_tex* texpal, struct flt* of, void* user_data);
   typedef int (*flt_callback_extref)(struct flt_node_extref* extref, struct flt* of, void* user_data);
   
   
-
     // Load openflight information into of with given options
   int flt_load_from_filename(const char* filename, struct flt* of, struct flt_opts* opts);
 
@@ -209,6 +222,7 @@ extern "C" {
     fltu32 palflags;                          // palette flags        (FLT_OPT_PAL_*)
     fltu32 hieflags;                          // hierarchy/node flags (FLT_OPT_HIE_*)
     fltu16* vtxstream;                        // optional custom forced vertex format or null for original
+    fltu16 stacksize;                         // optional stack size (no of elements). 0 to use FLT_STACKARRAY_SIZE
     const char** search_paths;                // optional custom array of search paths ordered. last element should be null.
     flt_callback_extref   cb_extref;          // optional callback when an external ref is found
     flt_callback_texture  cb_texture;         // optional callback when a texture entry is found
@@ -216,6 +230,7 @@ extern "C" {
   }flt_opts;
 
   // Palettes information
+#pragma pack(push,1)
   typedef struct flt_palettes
   {
     struct flt_pal_tex* tex_head;             // list of textures
@@ -225,35 +240,26 @@ extern "C" {
     fltu32 vtx_count;                         // no. of vertices
   }flt_palettes;
 
-  // Used when specified full hierarchy parsing (default)
-  typedef struct flt_hie_full
+  typedef struct flt_hie
   {
-    int reserved;
-  }flt_hie_full;
-
-  // Used when specified flat hierarchy parsing (FLT_OPT_HIE_FLAT)
-  typedef struct flt_hie_flat
-  {
-    struct flt_node_extref* extref_head;      // list of external references
-    struct flt_node_object* obj_head;         // list of objects
+    struct flt_node_extref* extref_head;      // list of external references    
+    struct flt_node* node_root;               // 
     fltu16 extref_count;                      
-    fltu16 obj_count;
-  }flt_hie_flat;
+    fltu32 node_count;
+  }flt_hie;
 
   typedef struct flt
   {
     char* filename;                           // filename used to load or null if no load from file
     struct flt_header* header;                // header           (when FLT_OPT_HIE_HEADER)
-    struct flt_palettes* pal;                 // palettes         (when any FLT_OPT_PAL_* flag is set)
-    struct flt_hie_full* hie_full;            // hierarchy full   (default, only if any FLT_OPT_HIE_* is set)
-    struct flt_hie_flat* hie_flat;            // hierarchy flat   (when FLT_OPT_HIE_FLAT)
+    struct flt_palettes* pal;                 // palettes         (when any FLT_OPT_PAL_* flag is set)    
+    struct flt_hie* hie;                      // hierarchy 
     fltatom32 ref;
 
     int errcode;                              // error code (see flt_get_err_reason)
-    struct flt_context* ctx;                 // internal parsing context data (set null)
+    struct flt_context* ctx;                  // internal parsing context data (set null)
   }flt;
   
-  #pragma pack(push,1)
   typedef struct flt_op
   { 
     fltu16 op;
@@ -278,14 +284,50 @@ extern "C" {
     struct flt* of; // only resolved when FLT_OPT_HIE_EXTREF_RESOLVE
   }flt_node_extref;
 
+  typedef struct flt_node
+  {
+    char*  name;
+    struct flt_node* next;
+    struct flt_node* child_head;
+    struct flt_node* child_tail;  // last for shortcut adding
+    fltu16 type;                  // one of FLT_NODE_*
+    fltu16 child_count;           // number of children
+  }flt_node;
+
   typedef struct flt_node_object
   {
-    char* name;
-    struct flt_node_object* next;
+    struct flt_node base;
     flti16 flags;
     flti16 priority;
     flti16 transp;
   }flt_node_object;
+
+  typedef struct flt_node_group
+  {
+    struct flt_node base;    
+    fltu32 loop_count;
+    float loop_dur;
+    float last_fr_dur;
+    flti16 priority;
+    flti16 flags;
+  }flt_node_group;
+
+  typedef struct flt_node_mesh
+  {
+    struct flt_node base;
+
+  }flt_node_mesh;
+
+  typedef struct flt_node_lod
+  {
+    struct flt_node base;
+    double switch_in;
+    double switch_out;
+    double cnt_coords[3];
+    double trans_range;
+    double sig_size;
+    flti16 flags;
+  }flt_node_lod;
 
   typedef struct flt_header
   {
@@ -355,6 +397,16 @@ extern "C" {
 ////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef FLT_IMPLEMENTATION
 
+#if defined(_DEBUG) || defined(DEBUG)
+#ifdef _MSC_VER
+#define FLT_BREAK __debugbreak()
+#else
+#define FLT_BREAK raise(SIGTRAP)
+#endif
+#else
+#define FLT_BREAK
+#endif
+
 // Memory functions override
 #if defined(flt_malloc) && defined(flt_free) && defined(flt_calloc) && defined(flt_strdup) && defined(flt_realloc)
 // ok, all defined
@@ -397,6 +449,11 @@ extern "C" {
 #ifndef FLT_HASHTABLE_SIZE
 #define FLT_HASHTABLE_SIZE 3079
 #endif
+
+#ifndef FLT_STACKARRAY_SIZE
+#define FLT_STACKARRAY_SIZE 32
+#endif
+
 
 #if defined(WIN32) || defined(_WIN32) || (defined(sgi) && defined(unix) && defined(_MIPSEL)) || (defined(sun) && defined(unix) && !defined(_BIG_ENDIAN)) || (defined(__BYTE_ORDER) && (__BYTE_ORDER == __LITTLE_ENDIAN)) || (defined(__APPLE__) && defined(__LITTLE_ENDIAN__)) || (defined( _PowerMAXOS ) && (BYTE_ORDER == LITTLE_ENDIAN ))
 #define FLT_LITTLE_ENDIAN
@@ -457,14 +514,13 @@ typedef struct flt_context
   FILE* f;
   struct flt_pal_tex* pal_tex_last;
   struct flt_node_extref* node_extref_last;
-  struct flt_node_object* node_object_last;
   struct flt_opts* opts;
   struct flt_dict* dict;
+  struct flt_stack* stack;
   char* basepath;
   fltu32 vtx_offset;
   fltu32 rec_count;
-  fltu16 op_last;        // immediate last
-  fltu16 op_last_node;   // last read/created node
+  fltu16 op_last;        // immediate last  
 }flt_context;
 
 ////////////////////////////////////////////////
@@ -504,6 +560,24 @@ void* flt_dict_get(flt_dict* dict, const char* key);
 flt_dict_node* flt_dict_create_node(const char* key, unsigned long keyhash, void* value);
 int flt_dict_insert(flt_dict* dict, const char* key, void* value);
 
+////////////////////////////////////////////////
+// Stack
+////////////////////////////////////////////////
+typedef struct flt_stack
+{
+  flt_node** entries;
+  int count;
+  int capacity;
+}flt_stack;
+
+int flt_stack_create(flt_stack** s, int capacity);
+void flt_stack_destroy(flt_stack** s);
+void flt_stack_clear(flt_stack* s);
+void flt_stack_push(flt_stack* s, flt_node* value);
+flt_node* flt_stack_top(flt_stack* s);
+flt_node* flt_stack_pop(flt_stack* s);
+void flt_stack_set_top(flt_stack* s, flt_node* value);
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Forward declarations of functions
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -514,17 +588,24 @@ const char* flt_get_op_name(fltu16 opcode);
 fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr, float* normal, float* uv);
 void flt_vtx_write(flt* of, fltu16* stream, double* xyz, fltu32 abgr, float* uv, float* normal);
 void flt_node_add_extref(flt* of, flt_node_extref* node);
-void flt_node_add_object(flt* of, flt_node_object* node);
-void flt_release_hie_flat(flt_hie_flat* flat);
-void flt_release_hie_full(flt_hie_full* full);
+int flt_node_can_add(flt* of);
+void flt_node_add(flt* of, flt_node* node);
+void flt_node_add_child(flt_node* parent, flt_node* node);
+void flt_release_hie(flt_hie* hie);
 FILE* flt_fopen(const char* filename, flt* of);
 char* flt_path_base(const char* filaname);
 char* flt_path_basefile(const char* filename);
 int flt_path_endsok(const char* filename);
+flt_node* flt_node_create(flt* of, int nodetype, const char* name);
 
 FLT_RECORD_READER(flt_reader_header);                 // FLT_OP_HEADER
-FLT_RECORD_READER(flt_reader_pal_tex);                // FLT_OP_PAL_TEXTURE
+FLT_RECORD_READER(flt_reader_pushlv);                 // FLT_OP_PUSH_LEVEL
+FLT_RECORD_READER(flt_reader_poplv);                  // FLT_OP_POP_LEVEL
+FLT_RECORD_READER(flt_reader_group);                  // FLT_OP_GROUP
+FLT_RECORD_READER(flt_reader_lod);                    // FLT_OP_LOD
+FLT_RECORD_READER(flt_reader_mesh);                   // FLT_OP_MESH
 FLT_RECORD_READER(flt_reader_object);                 // FLT_OP_OBJECT
+FLT_RECORD_READER(flt_reader_pal_tex);                // FLT_OP_PAL_TEXTURE
 FLT_RECORD_READER(flt_reader_longid);                 // FLT_OP_LONGID
 FLT_RECORD_READER(flt_reader_extref);                 // FLT_OP_EXTREF
 FLT_RECORD_READER(flt_reader_pal_vertex);             // FLT_OP_PAL_VERTEX
@@ -532,7 +613,6 @@ FLT_RECORD_READER(flt_reader_vtx_color);              // FLT_OP_VERTEX_COLOR
 FLT_RECORD_READER(flt_reader_vtx_color_normal);       // FLT_OP_VERTEX_COLOR_NORMAL
 FLT_RECORD_READER(flt_reader_vtx_color_uv);           // FLT_OP_VERTEX_COLOR_UV
 FLT_RECORD_READER(flt_reader_vtx_color_normal_uv);    // FLT_OP_VERTEX_COLOR_NORMAL_UV
-
 static float flt_zerovec[4]={0};
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -565,11 +645,10 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 {
   flt_op oh;
   flti32 skipbytes;  
-  flt_rec_reader read_tab[FLT_OP_MAX]={0};
+  flt_rec_reader readtab[FLT_OP_MAX]={0};
   fltu32 countable[FLT_OP_MAX]={0};
   flt_context* ctx;
   char use_pal=0, use_node=0;
-  int i;
 
   // preparing internal obj (references and shared dict)
   ctx = (flt_context*)flt_calloc(1,sizeof(flt_context));
@@ -583,23 +662,27 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   if ( !ctx->dict )
     flt_dict_create(0,1,&ctx->dict);
   flt_atomic_inc(&of->ref);
+  flt_stack_create(&ctx->stack,ctx->opts->stacksize);
 
   // opening file
   ctx->f = flt_fopen(filename, of);
   if ( !ctx->f ) return flt_err(FLT_ERR_FOPEN, of);
 
   // configuring reading
-  read_tab[FLT_OP_HEADER] = flt_reader_header;         // always read header
-  read_tab[FLT_OP_PAL_VERTEX] = flt_reader_pal_vertex; // always read vertex palette header for skipping at least
-  if ( opts->palflags & FLT_OPT_PAL_TEXTURE ) { read_tab[FLT_OP_PAL_TEXTURE] = flt_reader_pal_tex; use_pal=1; }  
-  if ( opts->hieflags & FLT_OPT_HIE_EXTREF )  { read_tab[FLT_OP_EXTREF] = flt_reader_extref; }
-  if ( opts->hieflags & FLT_OPT_HIE_OBJECT )  { read_tab[FLT_OP_OBJECT] = flt_reader_object; use_node=1; }
+  readtab[FLT_OP_HEADER] = flt_reader_header;         // always read header
+  readtab[FLT_OP_PAL_VERTEX] = flt_reader_pal_vertex; // always read vertex palette header for skipping at least
+  if ( opts->palflags & FLT_OPT_PAL_TEXTURE ) { readtab[FLT_OP_PAL_TEXTURE] = flt_reader_pal_tex; use_pal=1; }  
+  if ( opts->hieflags & FLT_OPT_HIE_EXTREF )  { readtab[FLT_OP_EXTREF] = flt_reader_extref; use_node=1; }
+  if ( opts->hieflags & FLT_OPT_HIE_OBJECT )  { readtab[FLT_OP_OBJECT] = flt_reader_object; use_node=1; }
+  if ( opts->hieflags & FLT_OPT_HIE_GROUP )   { readtab[FLT_OP_GROUP] = flt_reader_group; use_node=1; }
+  if ( opts->hieflags & FLT_OPT_HIE_LOD )     { readtab[FLT_OP_LOD] = flt_reader_lod; use_node=1; }
+  if ( opts->hieflags & FLT_OPT_HIE_MESH )    { readtab[FLT_OP_MESH] = flt_reader_mesh; use_node=1; }
   if ( opts->palflags & FLT_OPT_PAL_VERTEX ) // if reading vertices
   {
-    read_tab[FLT_OP_VERTEX_COLOR] = flt_reader_vtx_color;
-    read_tab[FLT_OP_VERTEX_COLOR_NORMAL] = flt_reader_vtx_color_normal;
-    read_tab[FLT_OP_VERTEX_COLOR_UV] = flt_reader_vtx_color_uv;
-    read_tab[FLT_OP_VERTEX_COLOR_NORMAL_UV] = flt_reader_vtx_color_normal_uv;
+    readtab[FLT_OP_VERTEX_COLOR] = flt_reader_vtx_color;
+    readtab[FLT_OP_VERTEX_COLOR_NORMAL] = flt_reader_vtx_color_normal;
+    readtab[FLT_OP_VERTEX_COLOR_UV] = flt_reader_vtx_color_uv;
+    readtab[FLT_OP_VERTEX_COLOR_NORMAL_UV] = flt_reader_vtx_color_normal_uv;
     use_pal=1;
   }
 
@@ -610,26 +693,26 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   }
 
   if (use_node)
-    read_tab[FLT_OP_LONGID] = flt_reader_longid;
+  {
+    if (!(ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES))
+      readtab[FLT_OP_LONGID] = flt_reader_longid;
+    readtab[FLT_OP_PUSHLEVEL] = flt_reader_pushlv;
+    readtab[FLT_OP_POPLEVEL] = flt_reader_poplv;
+  }
 
-  // hierarchy mode
-  if ( opts->hieflags & FLT_OPT_HIE_FLAT )
-  {
-    of->hie_flat = (flt_hie_flat*)flt_calloc(1,sizeof(flt_hie_flat));
-    flt_mem_check2(of->hie_flat, of);
-  }
-  else
-  {
-    of->hie_full = (flt_hie_full*)flt_calloc(1,sizeof(flt_hie_full));
-    flt_mem_check2(of->hie_full, of);
-  }
-  
+  // hierarchy (root should be always)
+  of->hie = (flt_hie*)flt_calloc(1,sizeof(flt_hie));
+  flt_mem_check2(of->hie, of);
+  of->hie->node_root = flt_node_create(of, FLT_NODE_BASE, "root");
+  flt_mem_check2(of->hie->node_root, of);
+  flt_stack_push(ctx->stack, of->hie->node_root);
+
   // reading loop
   while ( flt_read_ophead(FLT_OP_DONTCARE, &oh, ctx->f) )
   {
     ++ctx->rec_count;
     // if reader function available, use it
-    skipbytes = read_tab[oh.op] ? read_tab[oh.op](&oh, of) : oh.length-sizeof(flt_op);    
+    skipbytes = readtab[oh.op] ? readtab[oh.op](&oh, of) : oh.length-sizeof(flt_op);    
     ctx->op_last = oh.op;
 
     ++countable[oh.op];
@@ -639,13 +722,15 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
     else if ( skipbytes > 0 )   fseek(ctx->f,skipbytes,SEEK_CUR); 
   }
 
-  printf( "%s\n", of->filename );
-  for (i=0;i<FLT_OP_MAX;++i)
-  {
-    if ( countable[i] )
-      printf( "(%02d) %s : %d\n", i, flt_get_op_name(i), countable[i] );
-  }
+//   printf( "%s\n", of->filename );
+//   for (oh.op=0;oh.op<FLT_OP_MAX;++oh.op)
+//   {
+//     if ( countable[oh.op] )
+//       printf( "(%02d) %s : %d\n", oh.op, flt_get_op_name(oh.op), countable[oh.op] );
+//   }
 
+  flt_stack_pop(ctx->stack);
+  flt_stack_destroy(&ctx->stack); // no needed anymore (also released in flt_release)
   return flt_err(FLT_OK,of);
 }
 
@@ -750,6 +835,29 @@ FLT_RECORD_READER(flt_reader_header)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
+FLT_RECORD_READER(flt_reader_pushlv)
+{
+  flt_context* ctx=of->ctx;
+  int readbytes = oh->length-sizeof(flt_op);
+
+  flt_stack_push(ctx->stack,fltnull);
+
+  return readbytes;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+FLT_RECORD_READER(flt_reader_poplv)
+{
+  flt_context* ctx=of->ctx;
+  int readbytes = oh->length-sizeof(flt_op);  
+  flt_stack_pop(ctx->stack);
+
+  return readbytes;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_pal_tex)
 {
   flt_end_desc desc[]={
@@ -829,20 +937,97 @@ FLT_RECORD_READER(flt_reader_object)
   fltu32* u32;
   flti16* i16;
 
-  newobj = (flt_node_object*)flt_malloc(sizeof(flt_node_object));
-  flt_mem_check(newobj, of->errcode);
+  // read and create node
   readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,24),ctx->f);
-  newobj->name = flt_strdup(ctx->tmpbuff);
-  u32 = (fltu32*)(ctx->tmpbuff+8); flt_swap32(u32);
-  newobj->flags = (flti16)*u32;
-  i16 = (flti16*)(ctx->tmpbuff+12); flt_swap16(i16);
-  newobj->priority = *i16++; flt_swap16(i16);
-  newobj->transp = *i16;
-  newobj->next=fltnull;
+  if ( flt_node_can_add(of) )
+  {
+    newobj = (flt_node_object*)flt_node_create(of, FLT_NODE_OBJECT, ctx->tmpbuff);
+    flt_mem_check(newobj, of->errcode);
 
-  // add node (takes care of hierarhy)
-  flt_node_add_object(of,newobj);
-  ctx->op_last_node = FLT_OP_OBJECT;
+    // set values
+    u32 = (fltu32*)(ctx->tmpbuff+8); flt_swap32(u32);
+    newobj->flags = (flti16)*u32;
+    i16 = (flti16*)(ctx->tmpbuff+12); flt_swap16(i16);
+    newobj->priority = *i16++; flt_swap16(i16);
+    newobj->transp = *i16;
+
+    // add to hierarchy
+    flt_node_add(of,(flt_node*)newobj);
+  }
+  
+  return readbytes;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+FLT_RECORD_READER(flt_reader_group)
+{
+  flt_context* ctx=of->ctx;
+  int readbytes = oh->length-sizeof(flt_op);
+  flt_node_group* group;
+  fltu32* u32;
+  fltu16* u16;
+  float* flo;
+
+  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,40),ctx->f);
+  if ( flt_node_can_add(of) )
+  {
+    group = (flt_node_group*)flt_node_create(of,FLT_NODE_GROUP,ctx->tmpbuff);
+    flt_mem_check(group,of->errcode);
+
+    u16 =(fltu16*)(ctx->tmpbuff+8);flt_swap16(u16);
+    group->priority=*u16;
+    u32 =(fltu32*)(ctx->tmpbuff+12); flt_swap32(u32);
+    group->flags=*u32;
+    u32 =(fltu32*)(ctx->tmpbuff+28); flt_swap32(u32);
+    group->loop_count=*u32;
+    flo =(float*)(u32+1);flt_swap32(flo); flt_swap32(flo+1);
+    group->loop_dur=flo[0]; group->last_fr_dur=flo[1];
+
+    flt_node_add(of,(flt_node*)group);
+  }
+  return readbytes;
+}
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+FLT_RECORD_READER(flt_reader_lod)
+{
+  flt_context* ctx=of->ctx;
+  int readbytes = oh->length-sizeof(flt_op);
+  flt_node_lod* lod;
+  fltu32* u32;
+  double *dbl, *tgdbl;
+  int i;
+
+  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,76),ctx->f);
+  if ( flt_node_can_add(of) )
+  {
+    lod = (flt_node_lod*)flt_node_create(of,FLT_NODE_LOD,ctx->tmpbuff);
+    flt_mem_check(lod,of->errcode);
+
+    dbl=(double*)(ctx->tmpbuff+12); flt_swap64(dbl); flt_swap64(dbl+1);
+    lod->switch_in=dbl[0]; lod->switch_in=dbl[1];
+    u32=(fltu32*)(ctx->tmpbuff+32); flt_swap32(u32);
+    lod->flags = (flti16)*u32;
+    dbl+=2; tgdbl=lod->cnt_coords;
+    for (i=0;i<5;++i,++dbl){ flt_swap32(dbl); tgdbl[i]=*dbl; }
+    
+    flt_node_add(of,(flt_node*)lod);
+  }
+  return readbytes;
+}
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+FLT_RECORD_READER(flt_reader_mesh)
+{
+  flt_context* ctx=of->ctx;
+  int readbytes = oh->length-sizeof(flt_op);
+  flt_node* n= (flt_node*)flt_calloc(1,sizeof(flt_node));
+
+  readbytes -= (int)fread(ctx->tmpbuff,1,readbytes,ctx->f);
+
+  flt_free(n);
+
   return readbytes;
 }
 
@@ -852,16 +1037,16 @@ FLT_RECORD_READER(flt_reader_longid)
 {
   flt_context* ctx=of->ctx;
   int readbytes = oh->length-sizeof(flt_op);
-  flt_node_object* obj;
+  //flt_node_object* obj;
 
   readbytes -= (int)fread(ctx->tmpbuff, 1, flt_min(readbytes,512),ctx->f);
 
   switch (ctx->op_last)
   {
   case FLT_OP_OBJECT: 
-    obj = ctx->node_object_last;
-    obj->name = (char*)flt_realloc(obj->name, strlen(ctx->tmpbuff)+1);
-    strcpy(obj->name, ctx->tmpbuff);
+//     obj = ctx->node_object_last;
+//     obj->base.name = (char*)flt_realloc(obj->base.name, strlen(ctx->tmpbuff)+1);
+//     strcpy(obj->base.name, ctx->tmpbuff);
     break;
   }
   return readbytes;
@@ -1016,7 +1201,6 @@ void flt_release(flt* of)
 {
   flt_pal_tex* pt, *pn;
   
-  //printf( "Releasing %s\n", of->filename );
   if ( !of ) return;
   // header
   flt_safefree(of->filename);
@@ -1035,19 +1219,21 @@ void flt_release(flt* of)
   }
 
   // hierarchy
-  flt_release_hie_flat(of->hie_flat);
-  flt_safefree(of->hie_flat);
-  flt_release_hie_full(of->hie_full);
-  flt_safefree(of->hie_full);
+  flt_release_hie(of->hie);
+  flt_safefree(of->hie);  
 
   // context
   if ( of->ctx )
   {
+    // dict
     if ( of->ctx->dict && flt_atomic_dec(&of->ctx->dict->ref)<=0 )
     {
       flt_dict_destroy(&of->ctx->dict);
       of->ctx->dict = 0;
-    }
+    }    
+    // stack
+    flt_stack_destroy(&of->ctx->stack);
+    // finally context
     flt_safefree(of->ctx->basepath);
     flt_safefree(of->ctx);
   }
@@ -1055,14 +1241,32 @@ void flt_release(flt* of)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-void flt_release_hie_flat(flt_hie_flat* flat)
+void flt_release_node(flt_node* n)
+{
+  flt_node *next, *cur;
+
+  // children
+  cur=next=n->child_head;
+  while (cur)
+  {
+    next=cur->next;
+    flt_release_node(cur);
+    cur=next;
+  }
+  // now myself
+  flt_safefree(n->name);  
+  flt_free(n);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_release_hie(flt_hie* hie)
 {
   flt_node_extref *ec, *en;
-  flt_node_object *oc, *on;
-  if ( !flat ) return;
+  if ( !hie ) return;
 
   // external reference nodes
-  ec=en=flat->extref_head; 
+  ec=en=hie->extref_head; 
   while (ec)
   { 
     en=ec->next;
@@ -1075,43 +1279,9 @@ void flt_release_hie_flat(flt_hie_flat* flat)
     ec=en; 
   }
 
-  // object nodes
-  oc=on=flat->obj_head;
-  while (oc)
-  {
-    on=oc->next;
-    flt_safefree(oc->name);
-    flt_free(oc);
-    oc=on;
-  }
-
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-void flt_release_hie_full(flt_hie_full* full)
-{
-  if ( !full ) return;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-void flt_node_add_object(flt* of, flt_node_object* node)
-{
-  flt_context* ctx = of->ctx;
-  if ( of->hie_full )
-  {
-
-  }
-  else
-  {
-    if ( ctx->node_object_last )
-      ctx->node_object_last->next = node;
-    else
-      of->hie_flat->obj_head = node;
-    ++of->hie_flat->obj_count;
-  }
-  ctx->node_object_last = node;
+  // nodes
+  if ( hie->node_root ) // unnecessary
+    flt_release_node(hie->node_root);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1119,19 +1289,113 @@ void flt_node_add_object(flt* of, flt_node_object* node)
 void flt_node_add_extref(flt* of, flt_node_extref* node)
 {
   flt_context* ctx = of->ctx;
-  if ( of->hie_full )
-  {
 
+  if ( ctx->node_extref_last )
+    ctx->node_extref_last->next = node; // if shortcut to last one
+  else
+    of->hie->extref_head = node; // if starting list
+  ++of->hie->extref_count;
+
+  ctx->node_extref_last = node;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+int flt_node_can_add(flt* of)
+{
+  flt_context* ctx = of->ctx;
+
+  // if no hierarchy, can't add
+  if (!of->hie) 
+    return 0; 
+
+  // if top exists and isn't null, then a push should have been done... can't add (so far)
+  if ( ctx->stack->count && !flt_stack_top(ctx->stack) )
+  {
+    FLT_BREAK;
+    return 0;
+  }
+
+  return 1;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_node_add_child(flt_node* parent, flt_node* node)
+{
+  if ( !parent )  // always node_root
+    FLT_BREAK;
+
+  if ( !parent->child_head )
+  {
+    parent->child_tail = parent->child_head = node;
+  }
+  else 
+  {
+    parent->child_tail->next = node;
+    parent->child_tail = node;
+  }
+
+  ++parent->child_count;  
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_node_add(flt* of, flt_node* node)
+{
+  flt_context* ctx = of->ctx;
+  flt_node *top, *parent;
+
+  if (ctx->stack->count)
+  {
+    // stack not empty, pop to see top
+    top = flt_stack_pop(ctx->stack);
+
+    // it's a null (flt_node_add should've been called)
+    // put new node in that slot created by flt_op_push
+    if ( top )
+      FLT_BREAK;
+    
+    // add node to parent and push it to stack as a new (future) parent
+    parent = flt_stack_top(ctx->stack);    
+    flt_node_add_child(parent,node);    
+    flt_stack_push(ctx->stack,node);
   }
   else
   {
-    if ( ctx->node_extref_last )
-      ctx->node_extref_last->next = node; // if shortcut to last one
-    else
-      of->hie_flat->extref_head = node; // if starting list
-    ++of->hie_flat->extref_count;
+    FLT_BREAK; // shouldn't be here as there's always the node_root
   }
-  ctx->node_extref_last = node;
+
+  if ( of->hie ) 
+    ++of->hie->node_count;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+flt_node* flt_node_create(flt* of, int nodetype, const char* name)
+{
+  flt_node* n=0;
+  int size=0;
+  switch (nodetype)
+  {
+  case FLT_NODE_BASE: size=sizeof(flt_node); break;
+  case FLT_NODE_GROUP:size=sizeof(flt_node_group); break;
+  case FLT_NODE_OBJECT:size=sizeof(flt_node_object); break; 
+  case FLT_NODE_MESH  :size=sizeof(flt_node_mesh); break;
+  case FLT_NODE_LOD   :size=sizeof(flt_node_lod); break;
+  }
+
+  if ( size )
+  {
+    n=(flt_node*)flt_calloc(1,size);
+    if (n)
+    {
+      n->type = nodetype;
+      if ( !(of->ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES) && name && *name)
+        n->name = flt_strdup(name);
+    }
+  }
+  return n;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1400,8 +1664,9 @@ fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 ab
 {
   fltu32 tsize=0;
   fltu8 tgt_sem,offs,size;
-  float* floats;
+  float* floats; 
   int i;
+  const float invc=1.0f/255.f;
 
   while (*vstream)
   {
@@ -1411,17 +1676,28 @@ fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 ab
     switch(tgt_sem)
     {
     case FLT_VTX_POSITION: // support for float/double positions
+      floats = (float*)(outdata+offs);
       switch(size)
       {
-      case 12: floats = (float*)(outdata+offs); for (i=0;i<3;++i) floats[i]=(float)xyz[i]; break; // expecting 3 floats
-      case 16: floats = (float*)(outdata+offs); for (i=0;i<3;++i) floats[i]=(float)xyz[i]; floats[3]=1.0f; break; // expecting 4 floats
+      case 12: for (i=0;i<3;++i) floats[i]=(float)xyz[i]; break; // expecting 3 floats
+      case 16: for (i=0;i<3;++i) floats[i]=(float)xyz[i]; floats[3]=1.0f; break; // expecting 4 floats
       case 24: memcpy(outdata+offs,xyz,24); break; // expecting 3 doubles (same as flt)
       case 32: memcpy(outdata+offs,xyz,24); *((double*)(outdata+offs+24)) = 1.0; break; // expecting 4 doubles
       }
       break;
-    case FLT_VTX_COLOR : *(fltu32*)(outdata+offs)=abgr; break;
-    case FLT_VTX_NORMAL: floats = (float*)(outdata+offs); for (i=0;i<3;++i) floats[i]=(float)normal[i]; break;
-    case FLT_VTX_UV0   : floats = (float*)(outdata+offs); for (i=0;i<2;++i) floats[i]=(float)uv[i]; break;
+    case FLT_VTX_COLOR : 
+      switch(size)
+      {
+      case 4 : *(fltu32*)(outdata+offs)=abgr; break; // expecting packed color
+      case 12: floats=(float*)(outdata+offs); // expecting 3 floats normalized color
+        floats[0]=(abgr>>24)*invc;        floats[1]=((abgr>>16)&0xff)*invc; 
+        floats[2]=((abgr>>8)&0xff)*invc;  floats[3]=(abgr&0xff)*invc;
+        break;
+      }
+      
+      break;
+    case FLT_VTX_NORMAL: floats = (float*)(outdata+offs); for (i=0;i<3;++i) floats[i]=normal[i]; break; // 3 normals
+    case FLT_VTX_UV0   : floats = (float*)(outdata+offs); for (i=0;i<(int)(size/sizeof(float));++i) floats[i]=i<2 ? uv[i] : 0.0f; break; // 2 or 3 uv comps
     }
     ++vstream;
   }
@@ -1733,6 +2009,74 @@ long flt_atomic_inc(fltatom32* c)
   return __sync_add_and_fetch(c,1);
 }
 #endif
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+//                                STACK
+////////////////////////////////////////////////////////////////////////////////////////////////
+int flt_stack_create(flt_stack** s, int capacity)
+{
+  flt_stack* _s = (flt_stack*)flt_calloc(1,sizeof(flt_stack));
+  if ( !_s ) return 0;  
+  if (!capacity) 
+    capacity = FLT_STACKARRAY_SIZE;
+
+  _s->entries = (flt_node**)flt_malloc(sizeof(flt_node*)*capacity);
+  if (!_s->entries) return  0;
+  _s->capacity = capacity;
+
+  *s = _s;
+  return 1;
+}
+
+void flt_stack_destroy(flt_stack** s)
+{
+  if ( !s || !*s ) return;
+#ifdef _DEBUG
+  if ( (*s)->count )
+    printf( "Stack destroyed with %d elements\n", (*s)->count);
+#endif
+  flt_safefree((*s)->entries);
+  flt_safefree((*s));
+}
+
+void flt_stack_clear(flt_stack* s)
+{
+  s->count=0;
+}
+
+void flt_stack_push(flt_stack* s, flt_node* value)
+{
+  if (s->count >= s->capacity )
+  {
+    FLT_BREAK;
+    return;
+  }
+  s->entries[s->count++]=value;
+}
+
+flt_node* flt_stack_top(flt_stack* s)
+{
+  return s->count ? s->entries[s->count-1] : fltnull;
+}
+
+flt_node* flt_stack_pop(flt_stack* s)
+{
+  flt_node* v=fltnull;
+
+  if (s->count)
+  {
+    v=s->entries[--s->count];
+  }
+  return v;
+}
+
+void flt_stack_set_top(flt_stack* s, flt_node* value)
+{
+  if (s->count)
+  {
+    s->entries[s->count-1]=value;
+  }
+}
 
 /*
 
