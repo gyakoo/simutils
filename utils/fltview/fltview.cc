@@ -160,10 +160,15 @@ void print_hie(const char* filename)
   flt* of=(flt*)flt_calloc(1,sizeof(flt));
 
   // actual read
-  opts->hieflags |= FLT_OPT_HIE_EXTREF | FLT_OPT_HIE_EXTREF_RESOLVE | FLT_OPT_HIE_GROUP;
+  opts->palflags |= FLT_OPT_PAL_ALL;
+  opts->hieflags |= /*FLT_OPT_HIE_RESERVED | */ FLT_OPT_HIE_EXTREF_RESOLVE | FLT_OPT_HIE_ALL;
   t0=fltGetTime(); 
 
   flt_load_from_filename(filename,of,opts);
+
+  std::set<uint64_t> done;
+  int counterctx=0;
+  fltPrint(of,0,done, &counterctx);
 
   printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
   MessageBoxA(NULL,"continue","continue",MB_OK);
@@ -352,8 +357,9 @@ void fltPrint(flt* of, int d, std::set<uint64_t>& done, void* ctx)
 
 int main(int argc, const char** argv)
 {
-  //print_hie("../../../data/camp/master.flt");
-  read_with_callbacks_mt("../../../data/camp/master.flt");
+  print_hie("../../../data/utah/master.flt");
+  //read_with_callbacks_mt("../../../data/camp/master.flt");
+  //read_with_callbacks_mt("../../../data/camp/master.flt");
   //read_with_resolve("../../../data/camp/master.flt");  
 
   //testdict("../../../data/words.txt");

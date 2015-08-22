@@ -92,7 +92,7 @@ DOCUMENTATION
 
 // FLT Options
 // palette flags (filter parsing of palettes)
-#define FLT_OPT_PAL_NAMETABLE     (1<<0) // name table
+#define FLT_OPT_PAL_NAMETABLE     (1<<0) // first node: name table
 #define FLT_OPT_PAL_COLOR         (1<<1) // color 
 #define FLT_OPT_PAL_MATERIAL      (1<<2) // material
 #define FLT_OPT_PAL_MATERIALEXT   (1<<3) // extended material
@@ -107,8 +107,9 @@ DOCUMENTATION
 #define FLT_OPT_PAL_EYEPNT_TCKPLN (1<<12) // eyepoint and trackplane
 #define FLT_OPT_PAL_LINKAGE       (1<<13) // linkage
 #define FLT_OPT_PAL_EXTGUID       (1<<14) // extension GUID
-#define FLT_OPT_PAL_VERTEX        (1<<15) // vertex
+#define FLT_OPT_PAL_VERTEX        (1<<15) // last node: vertex
 #define FLT_OPT_PAL_VTX_SOURCE    (1<<16) // use original vertex format
+#define FLT_OPT_PAL_ALL           (0x7fff)
 
 //hierarchy/node flags (filter parsing of nodes and type of hierarchy)
 #define FLT_OPT_HIE_HEADER        (1<<0) // read header
@@ -131,9 +132,12 @@ DOCUMENTATION
 #define FLT_OPT_HIE_SWITCH        (1<<17)
 #define FLT_OPT_HIE_CAT           (1<<18)
 #define FLT_OPT_HIE_CURVE         (1<<19) // node last
-#define FLT_OPT_HIE_ALL           (0x0ffffc) // from bit 1 to 19
 #define FLT_OPT_HIE_EXTREF_RESOLVE (1<<20) // unless this bit is set, ext refs aren't resolved
 #define FLT_OPT_HIE_RESERVED      (1<<21)
+#define FLT_OPT_HIE_COMMENTS      (1<<22)
+
+#define FLT_OPT_HIE_ALL           (0x0ffffc) // from bit 1 to 19
+
 
 // Vertex semantic (you can use the original vertex format or force another, see flt_opts)
 #define FLT_VTX_POSITION 0
@@ -272,7 +276,7 @@ extern "C" {
 
   typedef struct flt_pal_tex
   {
-    char name[200];
+    char* name;
     flti32 patt_ndx;
     flti32 xy_loc[2];  
     struct flt_pal_tex* next;
@@ -716,7 +720,6 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
     of->hie->node_root = flt_node_create(of, FLT_NODE_BASE, "root");
     flt_mem_check2(of->hie->node_root, of);
     flt_stack_push(ctx->stack, of->hie->node_root);
-    flt_stack_push(ctx->stack, fltnull); // first group does not have a previous op_push will need it
   }
 
   // ---------------------------- TEMP
@@ -772,7 +775,6 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 //     }
 //   }
 
-  flt_stack_pop(ctx->stack); // null
   flt_stack_pop(ctx->stack); // root
   flt_stack_destroy(&ctx->stack); // no needed anymore (also released in flt_release)
   return flt_err(FLT_OK,of);
@@ -926,19 +928,22 @@ FLT_RECORD_READER(flt_reader_poplv)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_pal_tex)
 {
-  flt_end_desc desc[]={
-    {32, 3, flt_offsetto(patt_ndx,flt_pal_tex)},
-    {0,0,0}
-  };
-  int leftbytes;
+  int leftbytes=oh->length-sizeof(flt_op);
   flt_context* ctx = of->ctx;
   flt_opts* opts=ctx->opts;
+  flti32* i32;
+
   flt_pal_tex* newpt = (flt_pal_tex*)flt_calloc(1,sizeof(flt_pal_tex));
   flt_mem_check(newpt, of->errcode);
 
-  leftbytes = oh->length-sizeof(flt_op);
-  leftbytes -= (int)fread(newpt, 1, flt_min(leftbytes,sizeof(flt_pal_tex)), ctx->f);
-  flt_swap_desc(newpt, desc);
+  leftbytes -= (int)fread(ctx->tmpbuff, 1, flt_min(leftbytes,220), ctx->f);
+  if (!(opts->hieflags & FLT_OPT_HIE_NO_NAMES))
+    newpt->name = flt_strdup(ctx->tmpbuff);
+  i32 = (flti32*)(ctx->tmpbuff+200); flt_swap32(i32);
+  newpt->patt_ndx = *i32;
+  ++i32; flt_swap32(i32); flt_swap32(i32+1);
+  newpt->xy_loc[0]=i32[0]; newpt->xy_loc[1]=i32[1];
+
   if ( opts->cb_texture ) 
     opts->cb_texture(newpt,of,opts->cb_user_data); // callback?
 
@@ -1267,10 +1272,19 @@ void flt_release(flt* of)
   flt_safefree(of->filename);
   flt_safefree(of->header);
 
-  // texture palette list
+  // palette list
   if ( of->pal )
   {
-    pt=pn=of->pal->tex_head; while (pt){ pn=pt->next; flt_free(pt); pt=pn; } 
+    // texture pal
+    pt=of->pal->tex_head; 
+    while (pt)
+    { 
+      pn=pt->next; 
+      flt_safefree(pt->name);
+      flt_free(pt); 
+      pt=pn; 
+    } 
+
     // vertex palette
     flt_safefree(of->pal->vtx);
     if ( (int)of->pal->vtx_offsets<-512 || (int)of->pal->vtx_offsets>0 ) 
