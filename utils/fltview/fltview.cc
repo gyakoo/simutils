@@ -95,7 +95,7 @@ struct fltThreadPool
 double fltGetTime();
 bool fltExtensionIsImg(const char* filename);
 bool fltExtensionIs(const char* filename, const char* ext);
-void fltPrint(flt* of, int d, std::set<uint64_t>& done, void* ctx);
+void fltPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes);
 
 int fltCallbackExtRef(flt_node_extref* extref, flt* of, void* userdata)
 {
@@ -127,25 +127,23 @@ void read_with_callbacks_mt(const char* filename)
 
   // configuring read options
   opts->palflags = FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_SOURCE;
-  opts->hieflags = FLT_OPT_HIE_HEADER | FLT_OPT_HIE_ALL;// | FLT_OPT_HIE_EXTREF_RESOLVE;
+  opts->hieflags = FLT_OPT_HIE_HEADER | FLT_OPT_HIE_ALL;
   opts->cb_extref = fltCallbackExtRef;
   opts->cb_user_data = &tp;
 
-  
+  // master file task
   fltThreadTask task(fltThreadTask::TASK_FLT, filename, of, opts);
   tp.addNewTask(task);  
+
+  // wait until cores finished
   do
   {
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));    
+    std::this_thread::sleep_for(std::chrono::milliseconds(75));    
   } while ( !tp.tasks.empty() || tp.workingTasks>0 );
 
-  std::set<uint64_t> done;
-  int counterctx=0;
-  //fltPrint(of,0,done, &counterctx);
-
-  printf( "Total nodes all: %d\n", counterctx);
-  printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
-  MessageBoxA(NULL,"continue","continue",MB_OK);
+  char tmp[256]; sprintf_s(tmp, "Time: %g secs", (fltGetTime()-t0)/1000.0);
+  printf( "\n%s\n",tmp);
+  MessageBoxA(NULL,tmp,"continue",MB_OK);
   flt_release(of);
   flt_safefree(of);
   flt_safefree(opts);
@@ -320,45 +318,74 @@ double fltGetTime()
 }
 
 void fltIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
-
-void fltPrint(flt* of, int d, std::set<uint64_t>& done, void* ctx)
+void fltPrintNode(flt_node* n, int d)
 {
+  static const char* names[]={"BASE","EXTREF","GROUP","OBJECT","MESH","LOD"};
+  if ( !n ) return;
+
+  // my siblings and children
+  do
+  {
+    fltIndent(d); printf( "(%s) %s\n", names[n->type], n->name?n->name:"" );  
+    fltPrintNode(n->child_head,d+1);
+    n = n->next;
+  }while(n);
+}
+
+void fltPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes)
+{
+  // header
+  printf( "\n" );
   fltIndent(d); printf( "%s\n", of->filename);
   fltIndent(d); printf( "Records: %d\n", of->ctx->rec_count );
-  if ( of->hie ) { fltIndent(d); printf( "Nodes: %d\n", of->hie->node_count); *(int*)ctx += of->hie->node_count; }
+  if ( of->hie && of->hie->node_count) 
+  { 
+    fltIndent(d); printf( "Nodes: %d\n", of->hie->node_count); 
+    *tot_nodes += of->hie->node_count; 
+  }
+
+  // palettes
   if ( of->pal )
   {
-    fltIndent(d); printf( "Vertices: %d\n", of->pal->vtx_count);
-    fltIndent(d); printf( "Textures: %d\n", of->pal->tex_count);
-    flt_pal_tex* tex = of->pal->tex_head;
-    while (tex)
-    {
-      fltIndent(d+1); printf( "%s\n", tex->name );
-      tex = tex->next;
-    } 
+    if(of->pal->vtx_count){ fltIndent(d); printf( "Vertices: %d\n", of->pal->vtx_count);}
+    if(of->pal->tex_count)
+    { 
+      fltIndent(d); printf( "Textures: %d\n", of->pal->tex_count);
+      flt_pal_tex* tex = of->pal->tex_head;
+      while (tex)
+      {
+        fltIndent(d+1); printf( "%s\n", tex->name );
+        tex = tex->next;
+      } 
+    }
   }
   
+  // hierarchy and recursive print
   if ( of->hie )
   {
-    
-    fltIndent(d); printf( "Ext.References: %d\n", of->hie->extref_count );
-    flt_node_extref* extref = of->hie->extref_head;
-    while ( extref )
+    fltPrintNode(of->hie->node_root,d);
+
+    if ( of->hie->extref_count)
     {
-      if ( done.find( (uint64_t)extref->of ) == done.end() )
+      fltIndent(d); printf( "Ext.References: %d\n", of->hie->extref_count );
+      flt_node_extref* extref = of->hie->extref_head;
+      while ( extref )
       {
-        fltPrint(extref->of, d+1, done,ctx);
-        done.insert( (uint64_t)extref->of );
+        if ( done.find( (uint64_t)extref->of ) == done.end() )
+        {
+          fltPrint(extref->of, d+1, done,tot_nodes);
+          done.insert( (uint64_t)extref->of );
+        }
+        extref= (flt_node_extref*)extref->base.next;
       }
-      extref= (flt_node_extref*)extref->base.next;
     }
   }
 }
 
 int main(int argc, const char** argv)
 {
-  print_hie("../../../data/utah/master.flt");
-  //read_with_callbacks_mt("../../../data/camp/master.flt");
+  //print_hie("../../../data/utah/master.flt");
+  read_with_callbacks_mt("../../../data/camp/master.flt");
   //read_with_callbacks_mt("../../../data/camp/master.flt");
   //read_with_resolve("../../../data/camp/master.flt");  
 
