@@ -167,10 +167,12 @@ DOCUMENTATION
 
 // FLT Node types
 #define FLT_NODE_BASE   0
-#define FLT_NODE_GROUP  FLT_OP_GROUP
-#define FLT_NODE_OBJECT FLT_OP_OBJECT
-#define FLT_NODE_MESH   FLT_OP_MESH
-#define FLT_NODE_LOD    FLT_OP_LOD
+#define FLT_NODE_EXTREF 1 //FLT_OP_EXTREF
+#define FLT_NODE_GROUP  2 //FLT_OP_GROUP
+#define FLT_NODE_OBJECT 3 //FLT_OP_OBJECT
+#define FLT_NODE_MESH   4 //FLT_OP_MESH
+#define FLT_NODE_LOD    5 //FLT_OP_LOD
+#define FLT_NODE_MAX    6 
 
 #ifdef __cplusplus
 extern "C" {
@@ -188,6 +190,7 @@ extern "C" {
   typedef struct flt_header;
   typedef struct flt_context;
   typedef struct flt_pal_tex;
+  typedef struct flt_node;
   typedef struct flt_node_extref;
   typedef struct flt_node_object;
   typedef struct flt_node_group;
@@ -200,7 +203,7 @@ extern "C" {
 
     // If the extref is already loaded, references it (inc ref count) and returns NULL. 
     // Otherwise, extref not loaded yet, creates a new flt for it and returns the pathname for the extref.
-  char* flt_resolve_extref(struct flt_node_extref* extref, struct flt* of);
+  char* flt_extref_prepare(struct flt_node_extref* extref, struct flt* of);
 
     // Deallocates all memory
   void flt_release(struct flt* of);
@@ -274,17 +277,7 @@ extern "C" {
     flti32 xy_loc[2];  
     struct flt_pal_tex* next;
   }flt_pal_tex;
-
-  typedef struct flt_node_extref
-  {
-    char    name[200];
-    struct flt_node_extref* next;
-    flti32  reserved0;
-    flti32  flags;
-    flti16  view_asbb;
-    struct flt* of; // only resolved when FLT_OPT_HIE_EXTREF_RESOLVE
-  }flt_node_extref;
-
+  
   typedef struct flt_node
   {
     char*  name;
@@ -294,6 +287,15 @@ extern "C" {
     fltu16 type;                  // one of FLT_NODE_*
     fltu16 child_count;           // number of children
   }flt_node;
+
+  typedef struct flt_node_extref
+  {
+    struct flt_node base;
+    struct flt_node_extref* next_extref;
+    struct flt* of; // only resolved when FLT_OPT_HIE_EXTREF_RESOLVE
+    flti32  flags;
+    flti16  view_asbb;
+  }flt_node_extref;
 
   typedef struct flt_node_object
   {
@@ -400,12 +402,12 @@ extern "C" {
 
 #if defined(_DEBUG) || defined(DEBUG)
 #ifdef _MSC_VER
-#define FLT_BREAK __debugbreak()
+#define FLT_BREAK { __debugbreak(); }
 #else
-#define FLT_BREAK raise(SIGTRAP)
+#define FLT_BREAK { raise(SIGTRAP); }
 #endif
 #else
-#define FLT_BREAK
+#define FLT_BREAK {(void*)0;}
 #endif
 
 // Memory functions override
@@ -577,6 +579,7 @@ void flt_stack_destroy(flt_stack** s);
 void flt_stack_clear(flt_stack* s);
 void flt_stack_push(flt_stack* s, flt_node* value);
 flt_node* flt_stack_top(flt_stack* s);
+flt_node* flt_stack_top_not_null(flt_stack* s);
 flt_node* flt_stack_pop(flt_stack* s);
 void flt_stack_set_top(flt_stack* s, flt_node* value);
 
@@ -589,16 +592,15 @@ void flt_swap_desc(void* data, flt_end_desc* desc);
 const char* flt_get_op_name(fltu16 opcode);
 fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr, float* normal, float* uv);
 void flt_vtx_write(flt* of, fltu16* stream, double* xyz, fltu32 abgr, float* uv, float* normal);
-void flt_node_add_extref(flt* of, flt_node_extref* node);
-int flt_node_can_add(flt* of);
 void flt_node_add(flt* of, flt_node* node);
 void flt_node_add_child(flt_node* parent, flt_node* node);
-void flt_release_hie(flt_hie* hie);
 FILE* flt_fopen(const char* filename, flt* of);
 char* flt_path_base(const char* filaname);
 char* flt_path_basefile(const char* filename);
 int flt_path_endsok(const char* filename);
 flt_node* flt_node_create(flt* of, int nodetype, const char* name);
+void flt_release_node(flt_node* n);
+void flt_resolve_all_extref(flt* of);
 
 FLT_RECORD_READER(flt_reader_header);                 // FLT_OP_HEADER
 FLT_RECORD_READER(flt_reader_pushlv);                 // FLT_OP_PUSH_LEVEL
@@ -676,6 +678,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   ctx->f = flt_fopen(filename, of);
   if ( !ctx->f ) return flt_err(FLT_ERR_FOPEN, of);
 
+  //printf( "%s\n", filename );
   // configuring reading
   readtab[FLT_OP_HEADER] = flt_reader_header;         // always read header
   readtab[FLT_OP_PAL_VERTEX] = flt_reader_pal_vertex; // always read vertex palette header for skipping at least
@@ -713,6 +716,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
     of->hie->node_root = flt_node_create(of, FLT_NODE_BASE, "root");
     flt_mem_check2(of->hie->node_root, of);
     flt_stack_push(ctx->stack, of->hie->node_root);
+    flt_stack_push(ctx->stack, fltnull); // first group does not have a previous op_push will need it
   }
 
   // ---------------------------- TEMP
@@ -751,6 +755,9 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
     else if ( skipbytes > 0 )   fseek(ctx->f,skipbytes,SEEK_CUR); 
   }
 
+  if (opts->hieflags & FLT_OPT_HIE_EXTREF_RESOLVE && of->hie)
+    flt_resolve_all_extref(of);  
+
   // ---------------------------- TEMP
   if (opts->hieflags & FLT_OPT_HIE_RESERVED) { print_i(ctx->cur_depth); printf( "End Extref %s\n", of->filename ); }
 
@@ -765,14 +772,15 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 //     }
 //   }
 
-  flt_stack_pop(ctx->stack);
+  flt_stack_pop(ctx->stack); // null
+  flt_stack_pop(ctx->stack); // root
   flt_stack_destroy(&ctx->stack); // no needed anymore (also released in flt_release)
   return flt_err(FLT_OK,of);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-char* flt_resolve_extref(struct flt_node_extref* extref, struct flt* of)
+char* flt_extref_prepare(struct flt_node_extref* extref, struct flt* of)
 {
   char* basefile=fltnull;
   flt_context* oldctx = of->ctx;
@@ -781,15 +789,15 @@ char* flt_resolve_extref(struct flt_node_extref* extref, struct flt* of)
     return fltnull;
 
   // check if reference has been loaded already
-  extref->of = (struct flt*)flt_dict_get(of->ctx->dict, extref->name);
+  extref->of = (struct flt*)flt_dict_get(of->ctx->dict, extref->base.name);
   if ( !extref->of ) // does not exist, creates one, register in dict and passes dict
   {
     extref->of = (flt*)flt_calloc(1,sizeof(flt));
     extref->of->ctx = of->ctx; 
-    flt_dict_insert(of->ctx->dict, extref->name, extref->of);
+    flt_dict_insert(of->ctx->dict, extref->base.name, extref->of);
 
     // Creates the full path for the external reference (uses same base path as parent)
-    basefile = flt_path_basefile(extref->name);  
+    basefile = flt_path_basefile(extref->base.name);  
     if ( basefile )
     {
       *oldctx->tmpbuff=0; // thread-safety: resolve has to be called from parent thread who found the extref
@@ -800,7 +808,7 @@ char* flt_resolve_extref(struct flt_node_extref* extref, struct flt* of)
         strcat(oldctx->tmpbuff, basefile);
       }
       else
-        strcpy(oldctx->tmpbuff,extref->name);
+        strcpy(oldctx->tmpbuff,extref->base.name);
     }
 
     basefile = (char*)flt_realloc(basefile,strlen(oldctx->tmpbuff)+1);    
@@ -814,6 +822,28 @@ char* flt_resolve_extref(struct flt_node_extref* extref, struct flt* of)
 
   
   return basefile;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_resolve_all_extref(flt* of)
+{
+  flt_context* ctx=of->ctx;
+  flt_opts* opts=ctx->opts;
+  char* basefile;
+  flt_node_extref* extref=of->hie->extref_head;
+
+  while(extref)
+  {
+    basefile = flt_extref_prepare(extref,of);
+    if ( basefile )
+    {
+      if ( flt_load_from_filename( basefile, extref->of, opts) != FLT_OK )
+        flt_safefree(extref->of);
+      flt_safefree(basefile);
+    }
+    extref=(flt_node_extref*)extref->next_extref;
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -839,7 +869,7 @@ FLT_RECORD_READER(flt_reader_header)
     {0,0,0}
   };
   flt_context* ctx=of->ctx;
-  int readbytes=oh->length-sizeof(flt_op);
+  int leftbytes=oh->length-sizeof(flt_op);
   flti32 format_rev=0;
 
   if ( ctx->opts->hieflags & FLT_OPT_HIE_HEADER ) 
@@ -847,26 +877,26 @@ FLT_RECORD_READER(flt_reader_header)
     // if storing header, read it entirely
     of->header = (flt_header*)flt_malloc(sizeof(flt_header));
     flt_mem_check(of->header, of->errcode);
-    readbytes -= (int)fread(of->header, 1, flt_min(readbytes,sizeof(flt_header)), ctx->f);  
+    leftbytes -= (int)fread(of->header, 1, flt_min(leftbytes,sizeof(flt_header)), ctx->f);  
     flt_swap_desc(of->header,desc); // endianess
     format_rev = of->header->format_rev;
   }
   else
   {
     // if no header needed, just read the version
-    fseek(ctx->f,8,SEEK_CUR); readbytes-=8;
-    readbytes -= (int)fread(&format_rev,1,4,ctx->f);
+    fseek(ctx->f,8,SEEK_CUR); leftbytes-=8;
+    leftbytes -= (int)fread(&format_rev,1,4,ctx->f);
     flt_swap32(&format_rev);
   }
 
   // checking version
   if ( format_rev > FLT_VERSION ) 
   { 
-    readbytes = -1; 
+    leftbytes = -1; 
     of->errcode=FLT_ERR_VERSION; 
   }
 
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -874,11 +904,11 @@ FLT_RECORD_READER(flt_reader_header)
 FLT_RECORD_READER(flt_reader_pushlv)
 {
   flt_context* ctx=of->ctx;
-  int readbytes = oh->length-sizeof(flt_op);
+  int leftbytes = oh->length-sizeof(flt_op);
 
   flt_stack_push(ctx->stack,fltnull);
 
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -886,10 +916,10 @@ FLT_RECORD_READER(flt_reader_pushlv)
 FLT_RECORD_READER(flt_reader_poplv)
 {
   flt_context* ctx=of->ctx;
-  int readbytes = oh->length-sizeof(flt_op);  
+  int leftbytes = oh->length-sizeof(flt_op);  
   flt_stack_pop(ctx->stack);
 
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -900,14 +930,14 @@ FLT_RECORD_READER(flt_reader_pal_tex)
     {32, 3, flt_offsetto(patt_ndx,flt_pal_tex)},
     {0,0,0}
   };
-  int readbytes;
+  int leftbytes;
   flt_context* ctx = of->ctx;
   flt_opts* opts=ctx->opts;
   flt_pal_tex* newpt = (flt_pal_tex*)flt_calloc(1,sizeof(flt_pal_tex));
   flt_mem_check(newpt, of->errcode);
 
-  readbytes = oh->length-sizeof(flt_op);
-  readbytes -= (int)fread(newpt, 1, flt_min(readbytes,sizeof(flt_pal_tex)), ctx->f);
+  leftbytes = oh->length-sizeof(flt_op);
+  leftbytes -= (int)fread(newpt, 1, flt_min(leftbytes,sizeof(flt_pal_tex)), ctx->f);
   flt_swap_desc(newpt, desc);
   if ( opts->cb_texture ) 
     opts->cb_texture(newpt,of,opts->cb_user_data); // callback?
@@ -920,47 +950,40 @@ FLT_RECORD_READER(flt_reader_pal_tex)
 
   ctx->pal_tex_last = newpt;
   ++of->pal->tex_count;
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_extref)
 {
-  char* basefile;
-  flt_end_desc desc[]={
-    {32, 1, flt_offsetto(flags,flt_node_extref)},
-    {16, 1, flt_offsetto(view_asbb,flt_node_extref)},
-    {0,0,0}
-  };
-  int readbytes;
   flt_context* ctx = of->ctx;
   flt_opts* opts=ctx->opts;
-  flt_node_extref* newextref = (flt_node_extref*)flt_calloc(1,sizeof(flt_node_extref));
-  flt_mem_check(newextref, of->errcode);
-
-  readbytes = oh->length-sizeof(flt_op);
-  readbytes -= (int)fread(newextref, 1, flt_min(readbytes,sizeof(flt_node_extref)), ctx->f);
-  flt_swap_desc(newextref, desc);
-
-  // add node (that'll take care of hierarchy)
-  flt_node_add_extref(of,newextref);
-
-  if ( opts->cb_extref ) 
-    opts->cb_extref(newextref, of, opts->cb_user_data); // callback?
-
-  // if resolving external references...
-  if (opts->hieflags & FLT_OPT_HIE_EXTREF_RESOLVE )
+  flt_node_extref* newextref=0;
+  int leftbytes = oh->length-sizeof(flt_op);
+  flti32* i32;
+  fltu16* u16;
+  
+  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,210),ctx->f);
+  if ( of->hie )
   {
-    basefile = flt_resolve_extref(newextref,of);
-    if ( basefile )
-    {
-      if ( flt_load_from_filename( basefile, newextref->of, opts) != FLT_OK )
-        flt_safefree(newextref->of);
-      flt_safefree(basefile);
-    }
+    // creates
+    newextref = (flt_node_extref*)flt_node_create(of, FLT_NODE_EXTREF, ctx->tmpbuff);
+    flt_mem_check(newextref, of->errcode);    
+    // set values
+    i32 = (flti32*)(ctx->tmpbuff+204); flt_swap32(i32);
+    newextref->flags = *i32;
+    u16 = (fltu16*)(i32+1); flt_swap16(u16);
+    newextref->view_asbb = *u16;    
+    // add to hierarchy
+    flt_node_add(of,(flt_node*)newextref);
+
+    // callback?
+    if ( opts->cb_extref ) 
+      opts->cb_extref(newextref, of, opts->cb_user_data);
   }
-  return readbytes;
+
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -968,14 +991,14 @@ FLT_RECORD_READER(flt_reader_extref)
 FLT_RECORD_READER(flt_reader_object)
 {
   flt_context* ctx=of->ctx;
-  int readbytes = oh->length-sizeof(flt_op);
+  int leftbytes = oh->length-sizeof(flt_op);
   flt_node_object* newobj;
   fltu32* u32;
   flti16* i16;
 
   // read and create node
-  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,24),ctx->f);
-  if ( flt_node_can_add(of) )
+  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,24),ctx->f);
+  if ( of->hie )
   {
     newobj = (flt_node_object*)flt_node_create(of, FLT_NODE_OBJECT, ctx->tmpbuff);
     flt_mem_check(newobj, of->errcode);
@@ -991,7 +1014,7 @@ FLT_RECORD_READER(flt_reader_object)
     flt_node_add(of,(flt_node*)newobj);
   }
   
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -999,14 +1022,14 @@ FLT_RECORD_READER(flt_reader_object)
 FLT_RECORD_READER(flt_reader_group)
 {
   flt_context* ctx=of->ctx;
-  int readbytes = oh->length-sizeof(flt_op);
+  int leftbytes = oh->length-sizeof(flt_op);
   flt_node_group* group;
   fltu32* u32;
   fltu16* u16;
   float* flo;
 
-  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,40),ctx->f);
-  if ( flt_node_can_add(of) )
+  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,40),ctx->f);
+  if ( of->hie )
   {
     group = (flt_node_group*)flt_node_create(of,FLT_NODE_GROUP,ctx->tmpbuff);
     flt_mem_check(group,of->errcode);
@@ -1022,21 +1045,21 @@ FLT_RECORD_READER(flt_reader_group)
 
     flt_node_add(of,(flt_node*)group);
   }
-  return readbytes;
+  return leftbytes;
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_lod)
 {
   flt_context* ctx=of->ctx;
-  int readbytes = oh->length-sizeof(flt_op);
+  int leftbytes = oh->length-sizeof(flt_op);
   flt_node_lod* lod;
   fltu32* u32;
   double *dbl, *tgdbl;
   int i;
 
-  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,76),ctx->f);
-  if ( flt_node_can_add(of) )
+  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,76),ctx->f);
+  if ( of->hie )
   {
     lod = (flt_node_lod*)flt_node_create(of,FLT_NODE_LOD,ctx->tmpbuff);
     flt_mem_check(lod,of->errcode);
@@ -1050,21 +1073,21 @@ FLT_RECORD_READER(flt_reader_lod)
     
     flt_node_add(of,(flt_node*)lod);
   }
-  return readbytes;
+  return leftbytes;
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_mesh)
 {
   flt_context* ctx=of->ctx;
-  int readbytes = oh->length-sizeof(flt_op);
+  int leftbytes = oh->length-sizeof(flt_op);
   flt_node* n= (flt_node*)flt_calloc(1,sizeof(flt_node));
 
-  readbytes -= (int)fread(ctx->tmpbuff,1,readbytes,ctx->f);
+  leftbytes -= (int)fread(ctx->tmpbuff,1,leftbytes,ctx->f);
 
   flt_free(n);
 
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1072,18 +1095,18 @@ FLT_RECORD_READER(flt_reader_mesh)
 FLT_RECORD_READER(flt_reader_longid)
 {
   flt_context* ctx=of->ctx;
-  int readbytes = oh->length-sizeof(flt_op);
+  int leftbytes = oh->length-sizeof(flt_op);
 
   flt_node* top = flt_stack_top(ctx->stack);
   if ( top )
   {
-    readbytes -= (int)fread(ctx->tmpbuff, 1, flt_min(readbytes,512),ctx->f);
+    leftbytes -= (int)fread(ctx->tmpbuff, 1, flt_min(leftbytes,512),ctx->f);
     top->name = (char*)flt_realloc(top->name,strlen(ctx->tmpbuff)+1);
     flt_mem_check(top->name,of->errcode);
     strcpy(top->name,ctx->tmpbuff);
   }
   
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1092,12 +1115,12 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
 {
   flt_context* ctx=of->ctx;
   flt_opts* opts=ctx->opts;
-  int readbytes, vmaxcount;
+  int leftbytes, vmaxcount;
   fltu32 vtxsize;
 
   // record header
-  readbytes = oh->length - sizeof(flt_op);
-  readbytes -= (int)fread(&vmaxcount,1,flt_min(readbytes,4),ctx->f);
+  leftbytes = oh->length - sizeof(flt_op);
+  leftbytes -= (int)fread(&vmaxcount,1,flt_min(leftbytes,4),ctx->f);
   flt_swap32(&vmaxcount); 
 
   // read vertices from palette?
@@ -1131,10 +1154,10 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
   }
   else
   {
-    readbytes = vmaxcount;
+    leftbytes = vmaxcount-sizeof(flt_op)-4;
   }
 
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1144,19 +1167,19 @@ FLT_RECORD_READER(flt_reader_vtx_color)
   static fltu16 srcstream[]={1536, 4376, 0};
   flt_context* ctx=of->ctx;
   fltu16* stream= ( ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : fltnull;
-  int readbytes=oh->length-sizeof(flt_op);  
+  int leftbytes=oh->length-sizeof(flt_op);  
   double* coords; 
   flti32* abgr;
 
   // read data in
-  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,36),ctx->f);
+  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,36),ctx->f);
   coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   abgr=(flti32*)(ctx->tmpbuff+28); flt_swap32(abgr);
 
   // stream for POSITION/COLOR
   flt_vtx_write(of,stream,coords,*abgr,flt_zerovec,flt_zerovec);
 
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1166,13 +1189,13 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal)
   static fltu16 srcstream[]={1536, 4376, 8988, 0};
   flt_context* ctx=of->ctx;
   fltu16* stream= ( ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : fltnull;
-  int readbytes=oh->length-sizeof(flt_op);  
+  int leftbytes=oh->length-sizeof(flt_op);  
   double* coords;
   float* normal;
   flti32* abgr;
 
   // read data in
-  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,52),ctx->f);
+  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,52),ctx->f);
   coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   normal=(float*)(ctx->tmpbuff+28); flt_swap32(normal); flt_swap32(normal+1); flt_swap32(normal+2);
   abgr=(flti32*)(ctx->tmpbuff+40); flt_swap32(abgr);
@@ -1180,7 +1203,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal)
   // stream for POSITION/COLOR/NORMAL
   flt_vtx_write(of,stream,coords,*abgr,flt_zerovec,normal);
 
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1190,13 +1213,13 @@ FLT_RECORD_READER(flt_reader_vtx_color_uv)
   static fltu16 srcstream[]={1536, 4376, 12828, 0};
   flt_context* ctx=of->ctx;
   fltu16* stream= (ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : fltnull;
-  int readbytes=oh->length-sizeof(flt_op);  
+  int leftbytes=oh->length-sizeof(flt_op);  
   double* coords;
   float* uv;
   flti32* abgr;
 
   // read data in
-  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,40),ctx->f);
+  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,40),ctx->f);
   coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   uv=(float*)(ctx->tmpbuff+28); flt_swap32(uv); flt_swap32(uv+1);
   abgr=(flti32*)(ctx->tmpbuff+36); flt_swap32(abgr);
@@ -1204,7 +1227,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_uv)
   // stream for POSITION/COLOR/UV0
   flt_vtx_write(of,stream,coords,*abgr,uv,flt_zerovec);
 
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1214,14 +1237,14 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal_uv)
   static fltu16 srcstream[]={1536, 4376, 8988, 12840, 0};
   flt_context* ctx=of->ctx;
   fltu16* stream=( ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : fltnull;
-  int readbytes=oh->length-sizeof(flt_op);  
+  int leftbytes=oh->length-sizeof(flt_op);  
   double* coords;
   float* uv;
   float* normal;
   flti32* abgr;
 
   // read data in
-  readbytes -= (int)fread(ctx->tmpbuff,1,flt_min(readbytes,60),ctx->f);
+  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,60),ctx->f);
   coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
   normal=(float*)(ctx->tmpbuff+28); flt_swap32(normal); flt_swap32(normal+1); flt_swap32(normal+2);
   uv=(float*)(ctx->tmpbuff+40); flt_swap32(uv); flt_swap32(uv+1);
@@ -1230,7 +1253,7 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal_uv)
   // stream for POSITION/COLOR/NORMAL/UV0
   flt_vtx_write(of,stream,coords,*abgr,uv,normal);
 
-  return readbytes;
+  return leftbytes;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1256,19 +1279,21 @@ void flt_release(flt* of)
     flt_safefree(of->pal);
   }
 
-  // hierarchy
-  flt_release_hie(of->hie);
-  flt_safefree(of->hie);  
+  // nodes
+  if ( of->hie )
+  {
+    // releasing node hierarchy (all except extrefs)
+    flt_release_node(of->hie->node_root);
+    flt_safefree(of->hie->node_root);
+    flt_safefree(of->hie);
+  }
 
   // context
   if ( of->ctx )
   {
     // dict
     if ( of->ctx->dict && flt_atomic_dec(&of->ctx->dict->ref)<=0 )
-    {
       flt_dict_destroy(&of->ctx->dict);
-      of->ctx->dict = 0;
-    }    
     // stack
     flt_stack_destroy(&of->ctx->stack);
     // finally context
@@ -1282,6 +1307,11 @@ void flt_release(flt* of)
 void flt_release_node(flt_node* n)
 {
   flt_node *next, *cur;
+  flt_node_extref* eref;
+  
+  if (!n) return;
+  
+  flt_safefree(n->name);  
 
   // children
   cur=next=n->child_head;
@@ -1289,72 +1319,21 @@ void flt_release_node(flt_node* n)
   {
     next=cur->next;
     flt_release_node(cur);
+    flt_free(cur);
     cur=next;
   }
-  // now myself
-  flt_safefree(n->name);  
-  flt_free(n);
-}
 
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-void flt_release_hie(flt_hie* hie)
-{
-  flt_node_extref *ec, *en;
-  if ( !hie ) return;
-
-  // external reference nodes
-  ec=en=hie->extref_head; 
-  while (ec)
-  { 
-    en=ec->next;
-    if ( ec->of && flt_atomic_dec(&ec->of->ref)<=0 )
-    {
-      flt_release(ec->of); 
-      flt_safefree(ec->of);
-    }
-    flt_free(ec); 
-    ec=en; 
-  }
-
-  // nodes
-  if ( hie->node_root ) // unnecessary
-    flt_release_node(hie->node_root);
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-void flt_node_add_extref(flt* of, flt_node_extref* node)
-{
-  flt_context* ctx = of->ctx;
-
-  if ( ctx->node_extref_last )
-    ctx->node_extref_last->next = node; // if shortcut to last one
-  else
-    of->hie->extref_head = node; // if starting list
-  ++of->hie->extref_count;
-
-  ctx->node_extref_last = node;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-int flt_node_can_add(flt* of)
-{
-  flt_context* ctx = of->ctx;
-
-  // if no hierarchy, can't add
-  if (!of->hie) 
-    return 0; 
-
-  // if top exists and isn't null, then a push should have been done... can't add (so far)
-  if ( ctx->stack->count && flt_stack_top(ctx->stack) )
+  // external ref node to consider to release a flt* reference
+  if ( n->type == FLT_NODE_EXTREF )
   {
-    FLT_BREAK;
-    return 0;
+    eref=(flt_node_extref*)n;
+    if ( eref->of && flt_atomic_dec(&eref->of->ref)<=0 )
+    {
+      flt_release(eref->of);
+      flt_free(eref->of);        
+    }
+    eref=fltnull;
   }
-
-  return 1;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1382,22 +1361,20 @@ void flt_node_add_child(flt_node* parent, flt_node* node)
 void flt_node_add(flt* of, flt_node* node)
 {
   flt_context* ctx = of->ctx;
-  flt_node *top, *parent;
+  flt_node *parent=0;
+  flt_node_extref* er;
 
   if (ctx->stack->count)
   {
-    // stack not empty, pop to see top
-    top = flt_stack_pop(ctx->stack);
+    // pop and then look for parent
+    flt_stack_pop(ctx->stack);
+    parent = flt_stack_top_not_null(ctx->stack);      
 
-    // it's a null (flt_node_add should've been called)
-    // put new node in that slot created by flt_op_push
-    if ( top )
-      FLT_BREAK;
-    
-    // add node to parent and push it to stack as a new (future) parent
-    parent = flt_stack_top(ctx->stack);    
-    flt_node_add_child(parent,node);    
-    flt_stack_push(ctx->stack,node);
+    // add to parent
+    flt_node_add_child(parent,node);
+
+    // restore stack
+    flt_stack_push(ctx->stack, node );
   }
   else
   {
@@ -1405,7 +1382,22 @@ void flt_node_add(flt* of, flt_node* node)
   }
 
   if ( of->hie ) 
+  {
     ++of->hie->node_count;
+
+    // check if it's a extref node, then we maintain an additional flat list structure
+    if ( node->type==FLT_NODE_EXTREF )
+    {
+      er = (flt_node_extref*)node;
+      if ( ctx->node_extref_last )
+        ctx->node_extref_last->next_extref = er; // if shortcut to last one
+      else
+        of->hie->extref_head = er; // if starting list
+      ++of->hie->extref_count;
+      ctx->node_extref_last = er;
+    }
+  }
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1413,25 +1405,16 @@ void flt_node_add(flt* of, flt_node* node)
 flt_node* flt_node_create(flt* of, int nodetype, const char* name)
 {
   flt_node* n=0;
-  int size=0;
-  switch (nodetype)
-  {
-  case FLT_NODE_BASE: size=sizeof(flt_node); break;
-  case FLT_NODE_GROUP:size=sizeof(flt_node_group); break;
-  case FLT_NODE_OBJECT:size=sizeof(flt_node_object); break; 
-  case FLT_NODE_MESH  :size=sizeof(flt_node_mesh); break;
-  case FLT_NODE_LOD   :size=sizeof(flt_node_lod); break;
-  }
+  static int nodesizes[FLT_NODE_MAX]={sizeof(flt_node), sizeof(flt_node_extref), sizeof(flt_node_group),
+    sizeof(flt_node_object), sizeof(flt_node_mesh), sizeof(flt_node_lod)};  
+  int size=nodesizes[nodetype];
 
-  if ( size )
+  n=(flt_node*)flt_calloc(1,size);
+  if (n)
   {
-    n=(flt_node*)flt_calloc(1,size);
-    if (n)
-    {
-      n->type = nodetype;
-      if ( !(of->ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES) && name && *name)
-        n->name = flt_strdup(name);
-    }
+    n->type = nodetype;
+    if ( !(of->ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES) && name && *name)
+      n->name = flt_strdup(name);
   }
   return n;
 }
@@ -2095,6 +2078,18 @@ void flt_stack_push(flt_stack* s, flt_node* value)
 flt_node* flt_stack_top(flt_stack* s)
 {
   return s->count ? s->entries[s->count-1] : fltnull;
+}
+
+flt_node* flt_stack_top_not_null(flt_stack* s)
+{
+  int i=s->count-1;
+  
+  while (i>=0)
+  {
+    if ( s->entries[i] ) return s->entries[i];
+    --i;
+  }
+  return fltnull;
 }
 
 flt_node* flt_stack_pop(flt_stack* s)

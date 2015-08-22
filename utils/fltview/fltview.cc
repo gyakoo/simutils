@@ -69,8 +69,6 @@ struct fltThreadPoolContext
   fltThreadPoolContext() : numThreads(0), verbose(false)
   {
   }
-  //std::set<std::string> fltFiles;    
-  //std::string wildcard; // if empty, no recurse wildcard
   int numThreads;
   bool verbose;  
 };
@@ -101,7 +99,7 @@ void fltPrint(flt* of, int d, std::set<uint64_t>& done, void* ctx);
 
 int fltCallbackExtRef(flt_node_extref* extref, flt* of, void* userdata)
 {
-  char* finalname = flt_resolve_extref(extref,of);
+  char* finalname = flt_extref_prepare(extref,of);
   if ( finalname )
   {
     fltThreadTask task(fltThreadTask::TASK_FLT, finalname, extref->of, of->ctx->opts); //  read ref in parallel
@@ -111,11 +109,15 @@ int fltCallbackExtRef(flt_node_extref* extref, flt* of, void* userdata)
   return 1;
 }
 
-void read_with_callbacks_mt(const char* filename, fltThreadPool* tp)
+void read_with_callbacks_mt(const char* filename)
 {
-  double t0;
+  double t0=fltGetTime();
   flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
   flt* of=(flt*)flt_calloc(1,sizeof(flt));
+
+  fltThreadPool tp;
+  tp.ctx.numThreads = std::thread::hardware_concurrency();
+  tp.init();
 
 //   fltu16 vtxstream[4]={ 0 };
 //   vtxstream[0]=flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12); 
@@ -124,20 +126,18 @@ void read_with_callbacks_mt(const char* filename, fltThreadPool* tp)
 //   vtxstream[3]=0;
 
   // configuring read options
-  opts->palflags =FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_SOURCE;
+  opts->palflags = FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_SOURCE;
   opts->hieflags = FLT_OPT_HIE_HEADER | FLT_OPT_HIE_ALL;// | FLT_OPT_HIE_EXTREF_RESOLVE;
   opts->cb_extref = fltCallbackExtRef;
-  opts->cb_user_data = tp;
+  opts->cb_user_data = &tp;
 
-  // actual read
-  t0=fltGetTime();
-
+  
   fltThreadTask task(fltThreadTask::TASK_FLT, filename, of, opts);
-  tp->addNewTask(task);  
+  tp.addNewTask(task);  
   do
   {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));    
-  } while ( !tp->tasks.empty() || tp->workingTasks>0 );
+  } while ( !tp.tasks.empty() || tp.workingTasks>0 );
 
   std::set<uint64_t> done;
   int counterctx=0;
@@ -149,6 +149,8 @@ void read_with_callbacks_mt(const char* filename, fltThreadPool* tp)
   flt_release(of);
   flt_safefree(of);
   flt_safefree(opts);
+
+  tp.deinit();
 }
 
 void print_hie(const char* filename)
@@ -157,11 +159,9 @@ void print_hie(const char* filename)
   flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
   flt* of=(flt*)flt_calloc(1,sizeof(flt));
 
-  // configuring read options
-
   // actual read
-  opts->hieflags |= FLT_OPT_HIE_RESERVED | FLT_OPT_HIE_EXTREF | FLT_OPT_HIE_EXTREF_RESOLVE;
-  t0=fltGetTime();
+  opts->hieflags |= FLT_OPT_HIE_EXTREF | FLT_OPT_HIE_EXTREF_RESOLVE | FLT_OPT_HIE_GROUP;
+  t0=fltGetTime(); 
 
   flt_load_from_filename(filename,of,opts);
 
@@ -314,6 +314,54 @@ double fltGetTime()
 #endif
 }
 
+void fltIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
+
+void fltPrint(flt* of, int d, std::set<uint64_t>& done, void* ctx)
+{
+  fltIndent(d); printf( "%s\n", of->filename);
+  fltIndent(d); printf( "Records: %d\n", of->ctx->rec_count );
+  if ( of->hie ) { fltIndent(d); printf( "Nodes: %d\n", of->hie->node_count); *(int*)ctx += of->hie->node_count; }
+  if ( of->pal )
+  {
+    fltIndent(d); printf( "Vertices: %d\n", of->pal->vtx_count);
+    fltIndent(d); printf( "Textures: %d\n", of->pal->tex_count);
+    flt_pal_tex* tex = of->pal->tex_head;
+    while (tex)
+    {
+      fltIndent(d+1); printf( "%s\n", tex->name );
+      tex = tex->next;
+    } 
+  }
+  
+  if ( of->hie )
+  {
+    
+    fltIndent(d); printf( "Ext.References: %d\n", of->hie->extref_count );
+    flt_node_extref* extref = of->hie->extref_head;
+    while ( extref )
+    {
+      if ( done.find( (uint64_t)extref->of ) == done.end() )
+      {
+        fltPrint(extref->of, d+1, done,ctx);
+        done.insert( (uint64_t)extref->of );
+      }
+      extref= (flt_node_extref*)extref->base.next;
+    }
+  }
+}
+
+int main(int argc, const char** argv)
+{
+  //print_hie("../../../data/camp/master.flt");
+  read_with_callbacks_mt("../../../data/camp/master.flt");
+  //read_with_resolve("../../../data/camp/master.flt");  
+
+  //testdict("../../../data/words.txt");
+  
+  return 0;
+}
+
+
 // void testdict(const char* fname)
 // {
 //   char line[512];
@@ -349,53 +397,3 @@ double fltGetTime()
 //   printf( "flt_dict: %g sec\n", (fltGetTime()-t0)/niters/1000.0);
 // }
 // 
-void fltIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
-
-void fltPrint(flt* of, int d, std::set<uint64_t>& done, void* ctx)
-{
-  fltIndent(d); printf( "%s\n", of->filename);
-  fltIndent(d); printf( "Records: %d\n", of->ctx->rec_count );
-  if ( of->hie ) { fltIndent(d); printf( "Nodes: %d\n", of->hie->node_count); *(int*)ctx += of->hie->node_count; }
-  if ( of->pal )
-  {
-    fltIndent(d); printf( "Vertices: %d\n", of->pal->vtx_count);
-    fltIndent(d); printf( "Textures: %d\n", of->pal->tex_count);
-    flt_pal_tex* tex = of->pal->tex_head;
-    while (tex)
-    {
-      fltIndent(d+1); printf( "%s\n", tex->name );
-      tex = tex->next;
-    } 
-  }
-  
-  if ( of->hie )
-  {
-    
-    fltIndent(d); printf( "Ext.References: %d\n", of->hie->extref_count );
-    flt_node_extref* extref = of->hie->extref_head;
-    while ( extref )
-    {
-      if ( done.find( (uint64_t)extref->of ) == done.end() )
-      {
-        fltPrint(extref->of, d+1, done,ctx);
-        done.insert( (uint64_t)extref->of );
-      }
-      extref= extref->next;
-    }
-  }
-}
-
-int main(int argc, const char** argv)
-{
-  fltThreadPool tp;
-  tp.ctx.numThreads = std::thread::hardware_concurrency();
-  tp.init();
-  print_hie("../../../data/utah/master.flt");
-  //read_with_callbacks_mt("../../../data/utah/master.flt", &tp);
-  //read_with_resolve("../../../data/camp/master.flt");
-  tp.deinit();
-
-  //testdict("../../../data/words.txt");
-  
-  return 0;
-}
