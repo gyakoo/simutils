@@ -151,6 +151,27 @@ void read_with_callbacks_mt(const char* filename, fltThreadPool* tp)
   flt_safefree(opts);
 }
 
+void print_hie(const char* filename)
+{
+  double t0;
+  flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
+  flt* of=(flt*)flt_calloc(1,sizeof(flt));
+
+  // configuring read options
+
+  // actual read
+  opts->hieflags |= FLT_OPT_HIE_RESERVED | FLT_OPT_HIE_EXTREF | FLT_OPT_HIE_EXTREF_RESOLVE;
+  t0=fltGetTime();
+
+  flt_load_from_filename(filename,of,opts);
+
+  printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
+  MessageBoxA(NULL,"continue","continue",MB_OK);
+  flt_release(of);
+  flt_safefree(of);
+  flt_safefree(opts);
+}
+
 void read_with_resolve(const char* filename)
 {
   double t0;
@@ -369,7 +390,8 @@ int main(int argc, const char** argv)
   fltThreadPool tp;
   tp.ctx.numThreads = std::thread::hardware_concurrency();
   tp.init();
-  read_with_callbacks_mt("../../../data/camp/master.flt", &tp);
+  print_hie("../../../data/utah/master.flt");
+  //read_with_callbacks_mt("../../../data/utah/master.flt", &tp);
   //read_with_resolve("../../../data/camp/master.flt");
   tp.deinit();
 

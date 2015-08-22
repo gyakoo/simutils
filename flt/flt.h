@@ -131,8 +131,9 @@ DOCUMENTATION
 #define FLT_OPT_HIE_SWITCH        (1<<17)
 #define FLT_OPT_HIE_CAT           (1<<18)
 #define FLT_OPT_HIE_CURVE         (1<<19) // node last
-#define FLT_OPT_HIE_ALL           (0x0ffffe) // from bit 1 to 19
+#define FLT_OPT_HIE_ALL           (0x0ffffc) // from bit 1 to 19
 #define FLT_OPT_HIE_EXTREF_RESOLVE (1<<20) // unless this bit is set, ext refs aren't resolved
+#define FLT_OPT_HIE_RESERVED      (1<<21)
 
 // Vertex semantic (you can use the original vertex format or force another, see flt_opts)
 #define FLT_VTX_POSITION 0
@@ -520,6 +521,7 @@ typedef struct flt_context
   char* basepath;
   fltu32 vtx_offset;
   fltu32 rec_count;
+  fltu32 cur_depth;
   fltu16 op_last;        // immediate last  
 }flt_context;
 
@@ -641,6 +643,8 @@ int flt_read_ophead(fltu16 op, flt_op* data, FILE* f)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
+void print_i(int d){ while ((d--)>0) printf( "    "); }
+
 int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 {
   flt_op oh;
@@ -648,15 +652,19 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   flt_rec_reader readtab[FLT_OP_MAX]={0};
   fltu32 countable[FLT_OP_MAX]={0};
   flt_context* ctx;
-  char use_pal=0, use_node=0;
+  char use_pal=0, use_node=0;  
 
   // preparing internal obj (references and shared dict)
   ctx = (flt_context*)flt_calloc(1,sizeof(flt_context));
   ctx->opts = opts;  
-  if (of->ctx && of->ctx->dict) // reuse dictionary
+  if (of->ctx ) // reuse some stuff from input of->context
   {
-    ctx->dict = of->ctx->dict;
-    flt_atomic_inc(&of->ctx->dict->ref);
+    if ( of->ctx->dict )
+    {
+      ctx->dict = of->ctx->dict;
+      flt_atomic_inc(&of->ctx->dict->ref);
+    }
+    ctx->cur_depth = of->ctx->cur_depth;
   }
   of->ctx = ctx;
   if ( !ctx->dict )
@@ -698,35 +706,63 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
       readtab[FLT_OP_LONGID] = flt_reader_longid;
     readtab[FLT_OP_PUSHLEVEL] = flt_reader_pushlv;
     readtab[FLT_OP_POPLEVEL] = flt_reader_poplv;
+
+    // hierarchy (root should be always)
+    of->hie = (flt_hie*)flt_calloc(1,sizeof(flt_hie));
+    flt_mem_check2(of->hie, of);
+    of->hie->node_root = flt_node_create(of, FLT_NODE_BASE, "root");
+    flt_mem_check2(of->hie->node_root, of);
+    flt_stack_push(ctx->stack, of->hie->node_root);
   }
 
-  // hierarchy (root should be always)
-  of->hie = (flt_hie*)flt_calloc(1,sizeof(flt_hie));
-  flt_mem_check2(of->hie, of);
-  of->hie->node_root = flt_node_create(of, FLT_NODE_BASE, "root");
-  flt_mem_check2(of->hie->node_root, of);
-  flt_stack_push(ctx->stack, of->hie->node_root);
+  // ---------------------------- TEMP
+  if (opts->hieflags & FLT_OPT_HIE_RESERVED) { print_i(ctx->cur_depth); printf( "Begin Extref %s\n", of->filename ); }
 
-  // reading loop
+  // Reading Loop!
   while ( flt_read_ophead(FLT_OP_DONTCARE, &oh, ctx->f) )
   {
+    // ---------------------------- TEMP
+    {
+      ++countable[oh.op];
+      if (opts->hieflags & FLT_OPT_HIE_RESERVED)
+      {
+        if ( oh.op == FLT_OP_PUSHLEVEL )
+        {
+          print_i(ctx->cur_depth);
+          ++ctx->cur_depth;
+        }
+        else if ( oh.op == FLT_OP_POPLEVEL ) 
+        {
+          --ctx->cur_depth;
+          print_i(ctx->cur_depth);
+        }
+        else print_i(ctx->cur_depth);
+        printf( "(%03d) %s\n", oh.op, flt_get_op_name(oh.op) );
+      }
+    } // ---------------------------- TEMP
+
     ++ctx->rec_count;
     // if reader function available, use it
     skipbytes = readtab[oh.op] ? readtab[oh.op](&oh, of) : oh.length-sizeof(flt_op);    
     ctx->op_last = oh.op;
-
-    ++countable[oh.op];
 
     // if returned negative, it's an error, if positive, we skip until next record
     if ( skipbytes < 0 )        return flt_err(FLT_ERR_READBEYOND_REC,of);
     else if ( skipbytes > 0 )   fseek(ctx->f,skipbytes,SEEK_CUR); 
   }
 
-//   printf( "%s\n", of->filename );
-//   for (oh.op=0;oh.op<FLT_OP_MAX;++oh.op)
+  // ---------------------------- TEMP
+  if (opts->hieflags & FLT_OPT_HIE_RESERVED) { print_i(ctx->cur_depth); printf( "End Extref %s\n", of->filename ); }
+
+  // TEMPORARY
+//   if ( opts->hieflags & FLT_OPT_HIE_RESERVED )
 //   {
-//     if ( countable[oh.op] )
-//       printf( "(%02d) %s : %d\n", oh.op, flt_get_op_name(oh.op), countable[oh.op] );
+//     printf( "%s\n", of->filename );
+//     for (oh.op=0;oh.op<FLT_OP_MAX;++oh.op)
+//     {
+//       if ( countable[oh.op] )
+//         printf( "(%02d) %s : %d\n", oh.op, flt_get_op_name(oh.op), countable[oh.op] );
+//     }
 //   }
 
   flt_stack_pop(ctx->stack);
@@ -1037,18 +1073,16 @@ FLT_RECORD_READER(flt_reader_longid)
 {
   flt_context* ctx=of->ctx;
   int readbytes = oh->length-sizeof(flt_op);
-  //flt_node_object* obj;
 
-  readbytes -= (int)fread(ctx->tmpbuff, 1, flt_min(readbytes,512),ctx->f);
-
-  switch (ctx->op_last)
+  flt_node* top = flt_stack_top(ctx->stack);
+  if ( top )
   {
-  case FLT_OP_OBJECT: 
-//     obj = ctx->node_object_last;
-//     obj->base.name = (char*)flt_realloc(obj->base.name, strlen(ctx->tmpbuff)+1);
-//     strcpy(obj->base.name, ctx->tmpbuff);
-    break;
+    readbytes -= (int)fread(ctx->tmpbuff, 1, flt_min(readbytes,512),ctx->f);
+    top->name = (char*)flt_realloc(top->name,strlen(ctx->tmpbuff)+1);
+    flt_mem_check(top->name,of->errcode);
+    strcpy(top->name,ctx->tmpbuff);
   }
+  
   return readbytes;
 }
 
@@ -1062,9 +1096,9 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
   fltu32 vtxsize;
 
   // record header
-  fread(&vmaxcount,4,1,ctx->f);
+  readbytes = oh->length - sizeof(flt_op);
+  readbytes -= (int)fread(&vmaxcount,1,flt_min(readbytes,4),ctx->f);
   flt_swap32(&vmaxcount); 
-  readbytes = oh->length - sizeof(flt_op) - 4;
 
   // read vertices from palette?
   if ( opts->palflags & FLT_OPT_PAL_VERTEX )
@@ -1094,6 +1128,10 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
       // in the pointer of offsets stores the negative of the vertex size
       of->pal->vtx_offsets = (flti32*)(-(flti32)vtxsize);
     }
+  }
+  else
+  {
+    readbytes = vmaxcount;
   }
 
   return readbytes;
@@ -1310,7 +1348,7 @@ int flt_node_can_add(flt* of)
     return 0; 
 
   // if top exists and isn't null, then a push should have been done... can't add (so far)
-  if ( ctx->stack->count && !flt_stack_top(ctx->stack) )
+  if ( ctx->stack->count && flt_stack_top(ctx->stack) )
   {
     FLT_BREAK;
     return 0;
