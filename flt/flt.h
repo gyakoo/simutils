@@ -90,7 +90,9 @@ DOCUMENTATION
 #error Openflight FLT version not supported. Max. supported version FLT_LAST_VERSION_SUPPORTED
 #endif
 
-// FLT Options
+//////////////////////////////////////////////////////////////////////////
+// FLT OPTIONS
+//////////////////////////////////////////////////////////////////////////
 // palette flags (filter parsing of palettes)
 #define FLT_OPT_PAL_NAMETABLE     (1<<0) // first node: name table
 #define FLT_OPT_PAL_COLOR         (1<<1) // color 
@@ -108,48 +110,54 @@ DOCUMENTATION
 #define FLT_OPT_PAL_LINKAGE       (1<<13) // linkage
 #define FLT_OPT_PAL_EXTGUID       (1<<14) // extension GUID
 #define FLT_OPT_PAL_VERTEX        (1<<15) // last node: vertex
+
 #define FLT_OPT_PAL_VTX_SOURCE    (1<<16) // use original vertex format
-#define FLT_OPT_PAL_ALL           (0x7fff)
+#define FLT_OPT_PAL_ALL           (0x7fff)// from bit 0 to 15
 
 //hierarchy/node flags (filter parsing of nodes and type of hierarchy)
-#define FLT_OPT_HIE_HEADER        (1<<0) // read header
-#define FLT_OPT_HIE_NO_NAMES      (1<<1) // don't store names
-#define FLT_OPT_HIE_GROUP         (1<<2) // node first
-#define FLT_OPT_HIE_OBJECT        (1<<3)
-#define FLT_OPT_HIE_MESH          (1<<4)
-#define FLT_OPT_HIE_LIGHTPNT      (1<<5)
-#define FLT_OPT_HIE_LIGHTPNTSYS   (1<<6)
-#define FLT_OPT_HIE_DOF           (1<<7)
-#define FLT_OPT_HIE_EXTREF        (1<<8)
-#define FLT_OPT_HIE_LOD           (1<<9)
-#define FLT_OPT_HIE_SOUND         (1<<10)
-#define FLT_OPT_HIE_LIGHTSRC      (1<<11)
-#define FLT_OPT_HIE_ROADSEG       (1<<12)
-#define FLT_OPT_HIE_ROADCONST     (1<<13)
-#define FLT_OPT_HIE_ROADPATH      (1<<14)
-#define FLT_OPT_HIE_CLIPREG       (1<<15)
-#define FLT_OPT_HIE_TEXT          (1<<16)
-#define FLT_OPT_HIE_SWITCH        (1<<17)
-#define FLT_OPT_HIE_CAT           (1<<18)
-#define FLT_OPT_HIE_CURVE         (1<<19) // node last
-#define FLT_OPT_HIE_EXTREF_RESOLVE (1<<20) // unless this bit is set, ext refs aren't resolved
-#define FLT_OPT_HIE_RESERVED      (1<<21)
-#define FLT_OPT_HIE_COMMENTS      (1<<22)
+#define FLT_OPT_HIE_GROUP         (1<<0) // node first
+#define FLT_OPT_HIE_OBJECT        (1<<1)
+#define FLT_OPT_HIE_MESH          (1<<2)
+#define FLT_OPT_HIE_LIGHTPNT      (1<<3)
+#define FLT_OPT_HIE_LIGHTPNTSYS   (1<<4)
+#define FLT_OPT_HIE_DOF           (1<<5)
+#define FLT_OPT_HIE_EXTREF        (1<<6)
+#define FLT_OPT_HIE_LOD           (1<<7)
+#define FLT_OPT_HIE_SOUND         (1<<8)
+#define FLT_OPT_HIE_LIGHTSRC      (1<<9)
+#define FLT_OPT_HIE_ROADSEG       (1<<10)
+#define FLT_OPT_HIE_ROADCONST     (1<<11)
+#define FLT_OPT_HIE_ROADPATH      (1<<12)
+#define FLT_OPT_HIE_CLIPREG       (1<<13)
+#define FLT_OPT_HIE_TEXT          (1<<14)
+#define FLT_OPT_HIE_SWITCH        (1<<15)
+#define FLT_OPT_HIE_CAT           (1<<16)
+#define FLT_OPT_HIE_CURVE         (1<<17) 
+#define FLT_OPT_HIE_FACE          (1<<18) // node last
 
-#define FLT_OPT_HIE_ALL           (0x0ffffc) // from bit 1 to 19
+#define FLT_OPT_HIE_HEADER          (1<<20) // read header
+#define FLT_OPT_HIE_NO_NAMES        (1<<21) // don't store names
+#define FLT_OPT_HIE_EXTREF_RESOLVE  (1<<22) // unless this bit is set, ext refs aren't resolved
+#define FLT_OPT_HIE_RESERVED        (1<<23) // not used
+#define FLT_OPT_HIE_COMMENTS        (1<<24) // include comments 
+
+#define FLT_OPT_HIE_ALL           (0x7ffff) // from bit 0 to 18
 
 
+//////////////////////////////////////////////////////////////////////////
 // Vertex semantic (you can use the original vertex format or force another, see flt_opts)
 #define FLT_VTX_POSITION 0
 #define FLT_VTX_COLOR 1
 #define FLT_VTX_NORMAL 2
 #define FLT_VTX_UV0 3
 
+//////////////////////////////////////////////////////////////////////////
 // FLT Record Opcodes
 #define FLT_OP_DONTCARE 0
 #define FLT_OP_HEADER 1
 #define FLT_OP_GROUP 2
 #define FLT_OP_OBJECT 4
+#define FLT_OP_FACE 5
 #define FLT_OP_PUSHLEVEL 10
 #define FLT_OP_POPLEVEL 11
 #define FLT_OP_PUSHSUBFACE 19
@@ -165,6 +173,7 @@ DOCUMENTATION
 #define FLT_OP_VERTEX_COLOR_NORMAL 69
 #define FLT_OP_VERTEX_COLOR_NORMAL_UV 70
 #define FLT_OP_VERTEX_COLOR_UV 71
+#define FLT_OP_VERTEX_LIST 72
 #define FLT_OP_LOD 73
 #define FLT_OP_MESH 84
 #define FLT_OP_MAX 154
@@ -195,9 +204,10 @@ extern "C" {
   typedef struct flt_context;
   typedef struct flt_pal_tex;
   typedef struct flt_node;
+  typedef struct flt_node_group;
   typedef struct flt_node_extref;
   typedef struct flt_node_object;
-  typedef struct flt_node_group;
+  typedef struct flt_node_lod;
   typedef int (*flt_callback_texture)(struct flt_pal_tex* texpal, struct flt* of, void* user_data);
   typedef int (*flt_callback_extref)(struct flt_node_extref* extref, struct flt* of, void* user_data);
   
@@ -238,7 +248,6 @@ extern "C" {
   }flt_opts;
 
   // Palettes information
-#pragma pack(push,1)
   typedef struct flt_palettes
   {
     struct flt_pal_tex* tex_head;             // list of textures
@@ -288,6 +297,8 @@ extern "C" {
     struct flt_node* next;
     struct flt_node* child_head;
     struct flt_node* child_tail;  // last for shortcut adding
+    fltu32 nfaces;
+    fltu32 nindices;
     fltu16 type;                  // one of FLT_NODE_*
     fltu16 child_count;           // number of children
   }flt_node;
@@ -394,7 +405,6 @@ extern "C" {
     double   earth_major_axis;
     double   earth_minor_axis;
   }flt_header;
-#pragma pack (pop)
 
 #ifdef __cplusplus
 };
@@ -545,6 +555,8 @@ long flt_atomic_inc(fltatom32* c);
 ////////////////////////////////////////////////
 // Dictionary 
 ////////////////////////////////////////////////
+typedef unsigned long (*flt_dict_hash)(const unsigned char*, int);
+typedef int (*flt_dict_keycomp)(const char*, const char*, int);
 typedef struct flt_dict_node
 {
   char* key;
@@ -557,16 +569,21 @@ typedef struct flt_dict
 {
   struct flt_dict_node** hasht;
   struct flt_critsec* cs;
+  flt_dict_hash hashf;
+  flt_dict_keycomp keycomp;
   fltatom32 ref;
   int n_entries;
 }flt_dict;
 
-unsigned long flt_dict_hash(const unsigned char* str);
-void flt_dict_create(int n_entries, int create_cs, flt_dict** dict);
+unsigned long flt_dict_hash_djb2(const unsigned char* str, int extra);
+unsigned long flt_dict_hash_face_djb2(const unsigned char* str, int size);
+int flt_dict_keycomp_string(const char* a, const char* b, int extra);
+int flt_dict_keycomp_face(const char* a, const char* b, int size);
+void flt_dict_create(int n_entries, int create_cs, flt_dict** dict, flt_dict_hash hashf, flt_dict_keycomp kcomp);
 void flt_dict_destroy(flt_dict** dict);
-void* flt_dict_get(flt_dict* dict, const char* key);
+void* flt_dict_get(flt_dict* dict, const char* key, int size);
 flt_dict_node* flt_dict_create_node(const char* key, unsigned long keyhash, void* value);
-int flt_dict_insert(flt_dict* dict, const char* key, void* value);
+int flt_dict_insert(flt_dict* dict, const char* key, void* value, int size);
 
 ////////////////////////////////////////////////
 // Stack
@@ -608,6 +625,7 @@ void flt_resolve_all_extref(flt* of);
 
 FLT_RECORD_READER(flt_reader_header);                 // FLT_OP_HEADER
 FLT_RECORD_READER(flt_reader_pushlv);                 // FLT_OP_PUSH_LEVEL
+FLT_RECORD_READER(flt_reader_face);                   // FLT_OP_FACE
 FLT_RECORD_READER(flt_reader_poplv);                  // FLT_OP_POP_LEVEL
 FLT_RECORD_READER(flt_reader_group);                  // FLT_OP_GROUP
 FLT_RECORD_READER(flt_reader_lod);                    // FLT_OP_LOD
@@ -621,6 +639,7 @@ FLT_RECORD_READER(flt_reader_vtx_color);              // FLT_OP_VERTEX_COLOR
 FLT_RECORD_READER(flt_reader_vtx_color_normal);       // FLT_OP_VERTEX_COLOR_NORMAL
 FLT_RECORD_READER(flt_reader_vtx_color_uv);           // FLT_OP_VERTEX_COLOR_UV
 FLT_RECORD_READER(flt_reader_vtx_color_normal_uv);    // FLT_OP_VERTEX_COLOR_NORMAL_UV
+FLT_RECORD_READER(flt_reader_vertex_list);            // FLT_OP_VERTEX_LIST
 static float flt_zerovec[4]={0};
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -647,6 +666,7 @@ int flt_read_ophead(fltu16 op, flt_op* data, FILE* f)
   return op==FLT_OP_DONTCARE || data->op == op;
 }
 
+fltatom32 TOTALNFACES=0;
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void print_i(int d){ while ((d--)>0) printf( "    "); }
@@ -674,7 +694,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   }
   of->ctx = ctx;
   if ( !ctx->dict )
-    flt_dict_create(0,1,&ctx->dict);
+    flt_dict_create(0,1,&ctx->dict, flt_dict_hash_djb2, flt_dict_keycomp_string);
   flt_atomic_inc(&of->ref);
   flt_stack_create(&ctx->stack,ctx->opts->stacksize);
 
@@ -692,6 +712,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   if ( opts->hieflags & FLT_OPT_HIE_GROUP )   { readtab[FLT_OP_GROUP] = flt_reader_group; use_node=1; }
   if ( opts->hieflags & FLT_OPT_HIE_LOD )     { readtab[FLT_OP_LOD] = flt_reader_lod; use_node=1; }
   if ( opts->hieflags & FLT_OPT_HIE_MESH )    { readtab[FLT_OP_MESH] = flt_reader_mesh; use_node=1; }
+  if ( opts->hieflags & FLT_OPT_HIE_FACE )    { readtab[FLT_OP_FACE] = flt_reader_face; readtab[FLT_OP_VERTEX_LIST]= flt_reader_vertex_list; use_node=1;}
   if ( opts->palflags & FLT_OPT_PAL_VERTEX ) // if reading vertices
   {
     readtab[FLT_OP_VERTEX_COLOR] = flt_reader_vtx_color;
@@ -765,7 +786,6 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   if (opts->hieflags & FLT_OPT_HIE_RESERVED) { print_i(ctx->cur_depth); printf( "End Extref %s\n", of->filename ); }
 
   // TEMPORARY
-//   if ( opts->hieflags & FLT_OPT_HIE_RESERVED )
 //   {
 //     printf( "%s\n", of->filename );
 //     for (oh.op=0;oh.op<FLT_OP_MAX;++oh.op)
@@ -791,12 +811,12 @@ char* flt_extref_prepare(struct flt_node_extref* extref, struct flt* of)
     return fltnull;
 
   // check if reference has been loaded already
-  extref->of = (struct flt*)flt_dict_get(of->ctx->dict, extref->base.name);
+  extref->of = (struct flt*)flt_dict_get(of->ctx->dict, extref->base.name,0);
   if ( !extref->of ) // does not exist, creates one, register in dict and passes dict
   {
     extref->of = (flt*)flt_calloc(1,sizeof(flt));
     extref->of->ctx = of->ctx; 
-    flt_dict_insert(of->ctx->dict, extref->base.name, extref->of);
+    flt_dict_insert(of->ctx->dict, extref->base.name, extref->of,0);
 
     // Creates the full path for the external reference (uses same base path as parent)
     basefile = flt_path_basefile(extref->base.name);  
@@ -937,8 +957,8 @@ FLT_RECORD_READER(flt_reader_pal_tex)
   flt_mem_check(newpt, of->errcode);
 
   leftbytes -= (int)fread(ctx->tmpbuff, 1, flt_min(leftbytes,220), ctx->f);
-  if (!(opts->hieflags & FLT_OPT_HIE_NO_NAMES))
-    newpt->name = flt_strdup(ctx->tmpbuff);
+  //if (!(opts->hieflags & FLT_OPT_HIE_NO_NAMES)) // the essence of this node is the name
+  newpt->name = flt_strdup(ctx->tmpbuff);
   i32 = (flti32*)(ctx->tmpbuff+200); flt_swap32(i32);
   newpt->patt_ndx = *i32;
   ++i32; flt_swap32(i32); flt_swap32(i32+1);
@@ -1263,6 +1283,80 @@ FLT_RECORD_READER(flt_reader_vtx_color_normal_uv)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
+FLT_RECORD_READER(flt_reader_face)
+{
+  flt_context* ctx=of->ctx;
+  int leftbytes = oh->length-sizeof(flt_op);
+
+  flt_atomic_inc(&TOTALNFACES);
+
+
+  flt_node* top = flt_stack_top_not_null(ctx->stack);
+  if ( top )
+  {
+    ++top->nfaces;
+  }
+  //   if ( top )
+  //   {
+  //     leftbytes -= (int)fread(ctx->tmpbuff, 1, flt_min(leftbytes,512),ctx->f);
+  //     top->name = (char*)flt_realloc(top->name,strlen(ctx->tmpbuff)+1);
+  //     flt_mem_check(top->name,of->errcode);
+  //     strcpy(top->name,ctx->tmpbuff);
+  //   }
+
+  return leftbytes;
+}
+
+fltu32 maxvlist=0;
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+FLT_RECORD_READER(flt_reader_vertex_list)
+{
+  flt_context* ctx=of->ctx;
+  int leftbytes = oh->length-sizeof(flt_op);
+  fltu32 n_inds;
+  fltu32* inds;
+  fltu32 i;
+
+  n_inds = (oh->length-4)/4;
+
+  if ( n_inds > maxvlist )
+    maxvlist=n_inds;
+
+  flt_node* top = flt_stack_top_not_null(ctx->stack);
+  if ( top )
+  {
+    top->nindices+=n_inds;
+  }
+//   if ( n_inds!=3 && n_inds!=4 && (n_inds%3!=0) && (n_inds%4!=0))
+//   {
+//     FLT_BREAK;
+//     if ( n_inds )
+//     {
+//       inds = (fltu32*)flt_malloc(sizeof(fltu32)*n_inds);
+//       leftbytes -= (int)fread(inds,1,sizeof(fltu32)*n_inds,ctx->f);
+//       for (i=0;i<n_inds;++i) { flt_swap32(inds+i); }
+//       if ( of->pal && of->pal->vtx )
+//       {
+// 
+//       }
+//       flt_free(inds);
+//     }
+//   }
+  //   flt_node* top = flt_stack_top(ctx->stack);
+  //   if ( top )
+  //   {
+  //     leftbytes -= (int)fread(ctx->tmpbuff, 1, flt_min(leftbytes,512),ctx->f);
+  //     top->name = (char*)flt_realloc(top->name,strlen(ctx->tmpbuff)+1);
+  //     flt_mem_check(top->name,of->errcode);
+  //     strcpy(top->name,ctx->tmpbuff);
+  //   }
+
+  return leftbytes;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 void flt_release(flt* of)
 {
   flt_pal_tex* pt, *pn;
@@ -1427,7 +1521,7 @@ flt_node* flt_node_create(flt* of, int nodetype, const char* name)
   if (n)
   {
     n->type = nodetype;
-    if ( !(of->ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES) && name && *name)
+    if ( (!(of->ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES) && name && *name) || nodetype==FLT_NODE_EXTREF)
       n->name = flt_strdup(name);
   }
   return n;
@@ -1851,23 +1945,48 @@ int flt_path_endsok(const char* filename)
 //                                DICTIONARY
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // djb2
-unsigned long flt_dict_hash(const unsigned char* str) 
+unsigned long flt_dict_hash_djb2(const unsigned char* str, int unused) 
 {
+  unused;
   unsigned long hash = 5381;
   int c;
   while (c = *str++) hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
   return hash;
 }
 
+unsigned long flt_dict_hash_face_djb2(const unsigned char* data, int size)
+{
+  unsigned long hash = 5381;
+  int c,i;
+  for (i=0;i<size;++i)
+  {
+    c=*data++;
+    hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+  }
+  return hash;
+}
+
+int flt_dict_keycomp_string(const char* a, const char* b, int extra)
+{
+  return strcmp(a,b);
+}
+
+int flt_dict_keycomp_face(const char* a, const char* b, int size)
+{
+  return memcmp(a,b,size);
+}
+
 // n_entries <= 0 to select default size
 // create_cs==1 to create a critical section object
-void flt_dict_create(int n_entries, int create_cs, flt_dict** dict)
+void flt_dict_create(int n_entries, int create_cs, flt_dict** dict, flt_dict_hash hashf, flt_dict_keycomp keycomp)
 {
   flt_dict* d = (flt_dict*)flt_malloc(sizeof(flt_dict));
   if ( n_entries<=0 ) n_entries = FLT_HASHTABLE_SIZE;
   d->cs = create_cs ? flt_critsec_create() : 0;
   d->hasht = (flt_dict_node**)flt_calloc(n_entries,sizeof(flt_dict_node*));
   d->n_entries = n_entries;
+  d->hashf = hashf;
+  d->keycomp = keycomp;
   d->ref = 1;
   *dict = d;
 }
@@ -1899,18 +2018,18 @@ void flt_dict_destroy(flt_dict** dict)
   flt_safefree(*dict);
 }
 
-void* flt_dict_get(flt_dict* dict, const char* key)
+void* flt_dict_get(flt_dict* dict, const char* key, int size)
 {
   flt_dict_node *n;
   void* retval=0;
-  const unsigned long hashk = flt_dict_hash((const unsigned char*)key);
+  const unsigned long hashk = dict->hashf((const unsigned char*)key,size);
   const int entry = hashk % dict->n_entries;
 
   if ( dict->cs ) flt_critsec_enter(dict->cs);
   n = dict->hasht[entry];  
   while(n)
   {
-    if ( n->keyhash == hashk ){ retval=n->value; break; }
+    if ( n->keyhash == hashk && dict->keycomp(n->key,key,size)==0 ){ retval=n->value; break; }
     n=n->next;
   }
   if ( dict->cs ) flt_critsec_leave(dict->cs);
@@ -1927,14 +2046,14 @@ flt_dict_node* flt_dict_create_node(const char* key, unsigned long keyhash, void
   return n;
 }
 
-int flt_dict_insert(flt_dict* dict, const char* key, void* value)
+int flt_dict_insert(flt_dict* dict, const char* key, void* value, int size)
 {
   flt_dict_node *n, *ln;
   unsigned long hashk;
   int entry;
 
   if ( !value || !dict ) return 0; // must insert non-null value.  
-  hashk = flt_dict_hash((const unsigned char*)key);
+  hashk = dict->hashf((const unsigned char*)key, size);
   if ( dict->cs ) flt_critsec_enter(dict->cs); // acquire
   entry = hashk % dict->n_entries;
   n=dict->hasht[entry];
@@ -1950,7 +2069,7 @@ int flt_dict_insert(flt_dict* dict, const char* key, void* value)
     while (n)
     {
       // same keyhash and same keyname (just in case two different string with same hashkey)
-      if ( n->keyhash == hashk && strcmp(n->key,key)==0 ) { n->value = value; ln=0; break; }
+      if ( n->keyhash == hashk && dict->keycomp(n->key,key,size)==0 ) { n->value = value; ln=0; break; }
       ln=n;
       n=n->next;
     }    
@@ -1962,7 +2081,7 @@ int flt_dict_insert(flt_dict* dict, const char* key, void* value)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
-// critical section / atomic operations
+//                            CRITICAL SECTION / ATOMIC
 ////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef _MSC_VER
 typedef struct flt_critsec

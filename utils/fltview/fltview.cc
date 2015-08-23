@@ -143,6 +143,7 @@ void read_with_callbacks_mt(const char* filename)
 
   char tmp[256]; sprintf_s(tmp, "Time: %g secs", (fltGetTime()-t0)/1000.0);
   printf( "\n%s\n",tmp);
+  printf("nfaces total : %d\n", TOTALNFACES);
   MessageBoxA(NULL,tmp,"continue",MB_OK);
   flt_release(of);
   flt_safefree(of);
@@ -159,7 +160,7 @@ void print_hie(const char* filename)
 
   // actual read
   opts->palflags |= FLT_OPT_PAL_ALL;
-  opts->hieflags |= /*FLT_OPT_HIE_RESERVED | */ FLT_OPT_HIE_EXTREF_RESOLVE | FLT_OPT_HIE_ALL;
+  opts->hieflags |= /*FLT_OPT_HIE_RESERVED |  FLT_OPT_HIE_NO_NAMES|*/FLT_OPT_HIE_EXTREF_RESOLVE|FLT_OPT_HIE_ALL;
   t0=fltGetTime(); 
 
   flt_load_from_filename(filename,of,opts);
@@ -168,6 +169,8 @@ void print_hie(const char* filename)
   int counterctx=0;
   fltPrint(of,0,done, &counterctx);
 
+  printf("maxvlist: %d\n", maxvlist );
+  printf("nfaces total : %d\n", TOTALNFACES);
   printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
   MessageBoxA(NULL,"continue","continue",MB_OK);
   flt_release(of);
@@ -326,7 +329,7 @@ void fltPrintNode(flt_node* n, int d)
   // my siblings and children
   do
   {
-    fltIndent(d); printf( "(%s) %s\n", names[n->type], n->name?n->name:"" );  
+    fltIndent(d); printf( "(%s) %s (%d/%d) %s\n", names[n->type], n->name?n->name:"", n->nfaces, n->nindices, n->nindices/3!=n->nfaces ? "**":"" );
     fltPrintNode(n->child_head,d+1);
     n = n->next;
   }while(n);
@@ -363,8 +366,10 @@ void fltPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes)
   // hierarchy and recursive print
   if ( of->hie )
   {
+    // hierarchy
     fltPrintNode(of->hie->node_root,d);
 
+    // flat list of extrefs
     if ( of->hie->extref_count)
     {
       fltIndent(d); printf( "Ext.References: %d\n", of->hie->extref_count );
@@ -376,7 +381,7 @@ void fltPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes)
           fltPrint(extref->of, d+1, done,tot_nodes);
           done.insert( (uint64_t)extref->of );
         }
-        extref= (flt_node_extref*)extref->base.next;
+        extref= (flt_node_extref*)extref->next_extref;
       }
     }
   }
@@ -384,8 +389,8 @@ void fltPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes)
 
 int main(int argc, const char** argv)
 {
-  //print_hie("../../../data/utah/master.flt");
-  read_with_callbacks_mt("../../../data/camp/master.flt");
+  print_hie("../../../data/camp/master.flt");
+  //read_with_callbacks_mt("../../../data/utah/master.flt");
   //read_with_callbacks_mt("../../../data/camp/master.flt");
   //read_with_resolve("../../../data/camp/master.flt");  
 
