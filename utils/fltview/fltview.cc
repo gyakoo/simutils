@@ -1,7 +1,7 @@
 
-#ifdef _DEBUG
-#include <vld.h>
-#endif
+// #ifdef _DEBUG
+// #include <vld.h>
+// #endif
 // #define REPORTMEMLEAKS // empty by default
 // #ifdef _MSC_VER
 // # define _CRTDBG_MAP_ALLOC
@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 //#define FLT_NO_OPNAMES
+//#define FLT_COMPACT_FACES
 #define FLT_IMPLEMENTATION
 #include <flt.h>
 #include <cstdint>
@@ -144,6 +145,7 @@ void read_with_callbacks_mt(const char* filename)
   char tmp[256]; sprintf_s(tmp, "Time: %g secs", (fltGetTime()-t0)/1000.0);
   printf( "\n%s\n",tmp);
   printf("nfaces total : %d\n", TOTALNFACES);
+  printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
   MessageBoxA(NULL,tmp,"continue",MB_OK);
   flt_release(of);
   flt_safefree(of);
@@ -165,12 +167,13 @@ void print_hie(const char* filename)
 
   flt_load_from_filename(filename,of,opts);
 
-  std::set<uint64_t> done;
-  int counterctx=0;
-  fltPrint(of,0,done, &counterctx);
+  //std::set<uint64_t> done;
+  //int counterctx=0;
+  //fltPrint(of,0,done, &counterctx);
 
   printf("maxvlist: %d\n", maxvlist );
   printf("nfaces total : %d\n", TOTALNFACES);
+  printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
   printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
   MessageBoxA(NULL,"continue","continue",MB_OK);
   flt_release(of);
@@ -329,7 +332,7 @@ void fltPrintNode(flt_node* n, int d)
   // my siblings and children
   do
   {
-    fltIndent(d); printf( "(%s) %s (%d/%d) %s\n", names[n->type], n->name?n->name:"", n->nfaces, n->nindices, n->nindices/3!=n->nfaces ? "**":"" );
+    fltIndent(d); printf( "(%s) %s (%d/%d) %s\n", names[n->type], n->name?n->name:"", n->face_count, n->index_count, n->index_count/3!=n->face_count ? "**":"" );
     fltPrintNode(n->child_head,d+1);
     n = n->next;
   }while(n);
@@ -389,6 +392,14 @@ void fltPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes)
 
 int main(int argc, const char** argv)
 {
+  flt_array* arr;
+  flt_array_create(&arr,5,FLT_NULL);
+  for ( int i=0;i<10;++i )
+  {
+    flt_array_push_back(arr, (void*)i);
+  }
+  flt_array_destroy(&arr);
+
   print_hie("../../../data/camp/master.flt");
   //read_with_callbacks_mt("../../../data/utah/master.flt");
   //read_with_callbacks_mt("../../../data/camp/master.flt");
@@ -398,40 +409,3 @@ int main(int argc, const char** argv)
   
   return 0;
 }
-
-
-// void testdict(const char* fname)
-// {
-//   char line[512];
-//   std::vector<std::string> words; words.reserve(30000);
-//   FILE* f = fopen(fname, "rt");
-//   if ( !f ) return;
-//   while (fgets(line,512,f))
-//     words.push_back(line);
-//   fclose(f);
-//   const int niters=300;
-// 
-//   double t0 = fltGetTime();
-//   std::vector<std::string>::iterator it;
-//   for (int j=0;j<niters;++j)
-//   {
-//     std::map<std::string,void*> stdhash;
-//     size_t i=0;
-//     for ( it=words.begin(); it != words.end(); ++it, ++i)
-//       stdhash[*it] = (void*)i;
-//   }
-//   printf( "stdhash: %g sec\n", (fltGetTime()-t0)/niters/1000.0);
-// 
-//   t0 = fltGetTime();
-//   for (int j=0;j<niters;++j)
-//   {
-//     flt_dict* dict;
-//     flt_dict_create(49157,0,&dict);
-//     size_t i=0;
-//     for ( it=words.begin(); it != words.end(); ++it, ++i)
-//       flt_dict_insert(dict,it->c_str(),(void*)i);
-//     flt_dict_destroy(&dict);
-//   }
-//   printf( "flt_dict: %g sec\n", (fltGetTime()-t0)/niters/1000.0);
-// }
-// 
