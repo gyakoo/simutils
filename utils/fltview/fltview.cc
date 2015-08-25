@@ -214,7 +214,7 @@ void fltPrintNode(flt_node* n, int d)
   // my siblings and children
   do
   {
-    fltIndent(d); printf( "(%s) %s (%d/%d)\n", names[n->type], n->name?n->name:"", n->face_count, n->index_count);
+    fltIndent(d); printf( "(%s) %s (%d)\n", names[n->type], n->name?n->name:"", n->face_count);
     fltPrintNode(n->child_head,d+1);
     n = n->next;
   }while(n);

@@ -314,8 +314,10 @@ extern "C" {
     struct flt_node* next;
     struct flt_node* child_head;
     struct flt_node* child_tail;  // last for shortcut adding
+#ifdef FLT_UNIQUE_FACES
+    struct flt_face* face;
+#endif
     fltu32 face_count;
-    fltu32 index_count;
     fltu16 type;                  // one of FLT_NODE_*
     fltu16 child_count;           // number of children
   }flt_node;
@@ -356,7 +358,8 @@ extern "C" {
     struct flt_array* indices;
 #endif
   }flt_face;
-#define FLT_FACESIZE_HASH (sizeof(flt_face)-sizeof(flt_array*))
+
+#define FLT_FACESIZE_HASH (sizeof(flt_face)-sizeof(flt_array*)-sizeof(flt_face*)-sizeof(fltu32))
 
   typedef struct flt_node_extref
   {
@@ -402,15 +405,13 @@ extern "C" {
     flti32 flags;
   }flt_node_lod;
 
+#ifndef FLT_UNIQUE_FACES
   typedef struct flt_node_face
   {
     struct flt_node base;
-#ifdef FLT_UNIQUE_FACES
-    fltu32 face_hash;           // used to access flt_context.dictfaces
-#else
     struct flt_face face;
-#endif
   }flt_node_face;
+#endif
 
   typedef struct flt_node_vlist
   {
@@ -492,8 +493,12 @@ extern "C" {
 #else
 #define FLT_BREAK { raise(SIGTRAP); }
 #endif
+
+#define FLT_ASSERT(c) { if (!(c)){ FLT_BREAK; } }
+
 #else
 #define FLT_BREAK {(void*)0;}
+#define FLT_ASSERT(c)
 #endif
 
 // Memory functions override
@@ -730,6 +735,7 @@ void* flt_array_pop_back(flt_array* arr);
 void* flt_array_at(flt_array* arr, int index);
 void flt_array_clear(flt_array* arr);
 void flt_array_grow_double(flt_array* arr);
+void flt_array_ensure(flt_array* arr, int cap);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Forward declarations of functions
@@ -1408,10 +1414,12 @@ FLT_RECORD_READER(flt_reader_face)
   flti32* i32; flti16* i16; fltu16* u16; 
 #ifdef FLT_UNIQUE_FACES
   unsigned long facehash;
+  flt_face *lface, *lfacelast;
+#else
+  flt_node_face* nodeface;
 #endif
   flt_face tmpf={0};
   flt_face* face=&tmpf;
-  flt_node_face* nodeface;
   flt_atomic_inc(&TOTALNFACES);
 
   leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,76),ctx->f);
@@ -1450,26 +1458,28 @@ FLT_RECORD_READER(flt_reader_face)
 #ifdef FLT_UNIQUE_FACES
   // if we compiled for face palettes, let's do the hash thing 
   // we store the face hash in every face node
-  facehash = flt_dict_hash_face_djb2((const unsigned char*)face,FLT_FACESIZE_HASH);
-
-  // if it's unique, add it to dictionary of faces. 
-  if ( !flt_dict_get(ctx->dictfaces, (const char*) face, FLT_FACESIZE_HASH, facehash ) )
+  facehash=flt_dict_hash_face_djb2((const unsigned char*)face,FLT_FACESIZE_HASH);
+  // any face with same hash exists?
+  face=(flt_face*)flt_dict_get(ctx->dictfaces, (const char*) face, FLT_FACESIZE_HASH, facehash );
+  if ( !face )
   {
+    // if it's unique, add it to dictionary of faces. 
     face = (flt_face*)flt_malloc(sizeof(flt_face));
     flt_mem_check(face,of->errcode);
     *face = tmpf;
     flt_array_create(&face->indices,FLT_INDICESARRAY_INITCAP,flt_array_grow_double); // array of indices stored in face with 
     flt_atomic_inc(&TOTALUNIQUEFACES);
     flt_dict_insert(ctx->dictfaces, (const char*)face, face, FLT_FACESIZE_HASH, facehash);
-
-    // creating node only for unique faces
-    nodeface = (flt_node_face*)flt_node_create(of, FLT_NODE_FACE,ctx->tmpbuff);
-    flt_mem_check(nodeface,of->errcode);    
-    // only hash in node
-    nodeface->face_hash = facehash;
-    flt_node_add(of, (flt_node*)nodeface);
   }
 
+  // we're going to cache the face pointer in a list inside the parent node (group/lod/...)
+  FLT_ASSERT(parent && "face should be a parent");
+  if (parent)
+  {
+    FLT_ASSERT(!parent->face || parent->face==face);
+#error "Un grupo (parent) puede tener varias caras diferentes (diferentes hashes)"
+    parent->face = face;    
+  }
 #else
   // creating node for every face
   nodeface = (flt_node_face*)flt_node_create(of, FLT_NODE_FACE,ctx->tmpbuff);
@@ -1491,14 +1501,14 @@ FLT_RECORD_READER(flt_reader_vertex_list)
   flt_context* ctx=of->ctx;
   flt_node_vlist* vlistnode;
   int leftbytes = oh->length-sizeof(flt_op);
-  fltu32 n_inds;
+  fltu32 n_inds=(oh->length-4)/4;
   fltu32 i;
 
-  // number of indices
-  n_inds = (oh->length-4)/4;
-
 #ifdef FLT_UNIQUE_FACES
-
+  flt_face* face=0;
+  face=face;
+  // in UNIQUE mode, we don't store a node for the vertex list.
+  // instead we add the indices to the unique face's indices array
 #else
   // using normal vertex list node, create the node, create the indices array and add the node
   if ( n_inds )
@@ -1640,8 +1650,7 @@ void flt_face_destroy_indices(char* key, void* faceptr)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 void flt_node_add_child(flt_node* parent, flt_node* node)
 {
-  if ( !parent )  // always node_root
-    FLT_BREAK;
+  FLT_ASSERT(parent && "There should be at least a node-root. some unwanted pop was done");
 
   if ( !parent->child_head )
   {
@@ -1677,9 +1686,7 @@ void flt_node_add(flt* of, flt_node* node)
     flt_stack_push(ctx->stack, node );
   }
   else
-  {
-    FLT_BREAK; // shouldn't be here as there's always the node_root
-  }
+    FLT_BREAK;// "shouldn't be here as there's always the node_root"
 
   if ( of->hie ) 
   {
@@ -1705,8 +1712,14 @@ void flt_node_add(flt* of, flt_node* node)
 flt_node* flt_node_create(flt* of, int nodetype, const char* name)
 {
   flt_node* n=0;
+  static int nodefacesize = 
+#ifdef FLT_UNIQUE_FACES
+    0;
+#else
+    sizeof(flt_node_face);
+#endif
   static int nodesizes[FLT_NODE_MAX]={sizeof(flt_node), sizeof(flt_node_extref), sizeof(flt_node_group),
-    sizeof(flt_node_object), sizeof(flt_node_mesh), sizeof(flt_node_lod), sizeof(flt_node_face), sizeof(flt_node_vlist)};
+    sizeof(flt_node_object), sizeof(flt_node_mesh), sizeof(flt_node_lod), nodefacesize, sizeof(flt_node_vlist)};
   int size=nodesizes[nodetype];
 
   n=(flt_node*)flt_calloc(1,size);
@@ -2132,6 +2145,17 @@ int flt_path_endsok(const char* filename)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
+// custom strdup implementation making use of optionally user defined malloc
+////////////////////////////////////////////////////////////////////////////////////////////////
+char* flt_strdup_internal(const char* str)
+{
+  const int len=strlen(str);
+  char* outstr=(char*)flt_malloc(len+1);
+  memcpy(outstr, str, len+1);
+  return outstr;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
 //                                DICTIONARY
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // djb2
@@ -2423,7 +2447,7 @@ void flt_stack_push(flt_stack* s, flt_node* value)
 {
   if (s->count >= s->capacity )
   {
-    FLT_BREAK;
+    FLT_BREAK;//"stack ran out of memory, increase FLT_STACK_SIZE" );
     return;
   }
   s->entries[s->count++]=value;
@@ -2520,13 +2544,13 @@ void flt_array_clear(flt_array* arr)
   arr->size=0;
 }
 
-char* flt_strdup_internal(const char* str)
+void flt_array_ensure(flt_array* arr, int cap)
 {
-  const int len=strlen(str);
-  char* outstr=(char*)flt_malloc(len+1);
-  memcpy(outstr, str, len+1);
-  return outstr;
+  if ( cap <= arr->capacity ) return;
+  arr->capacity = cap;
+  flt_array_grow_double(arr); // ensure makes use directly of grow_double policy
 }
+
 
 /*
 bool nfltIsOpcodeObsolete(unsigned short opcode)
