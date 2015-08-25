@@ -208,7 +208,7 @@ unsigned char* sgirgb_load(const char* filename, int* x, int* y, int* comp)
     while(offset<numpixels && !feof(f))
       offset+=fread(channels+offset,1,(numpixels<<2)-offset,f);
 
-    if ( feof(f) && offset<(numpixels<<2) ){ if (x) *x=SGIRGB_ERR_WRONG_FILE; return sgi_close_and_return(f,outData); }
+    //if ( feof(f) && offset<(numpixels<<2) ){ if (x) *x=SGIRGB_ERR_WRONG_FILE; return sgi_close_and_return(f,outData); }
   }
   else
   {
@@ -220,7 +220,7 @@ unsigned char* sgirgb_load(const char* filename, int* x, int* y, int* comp)
     if (!tabstart){ if(x) *x=SGIRGB_ERR_OUT_MEM; return sgi_close_and_return(f,outData); }
     offset=0; 
     while (offset<k && !feof(f)) offset+=fread(tabstart+offset,1,k-offset,f);
-    if ( feof(f) && offset<k ){ if (x) *x=SGIRGB_ERR_WRONG_FILE; sgirgb_free(tabstart); return sgi_close_and_return(f,outData); }
+    //if ( feof(f) && offset<k ){ if (x) *x=SGIRGB_ERR_WRONG_FILE; sgirgb_free(tabstart); return sgi_close_and_return(f,outData); }
     fseek(f,k,SEEK_CUR); // table lengths not needed
     
     // reads in rle buffer (rest of the file)
@@ -230,7 +230,7 @@ unsigned char* sgirgb_load(const char* filename, int* x, int* y, int* comp)
     if ( !rlebuff ){ if(x) *x=SGIRGB_ERR_OUT_MEM; sgirgb_free(tabstart); return sgi_close_and_return(f,outData); }
     offset=0;
     while (offset<rlebuffsize && !feof(f)) offset+=fread(rlebuff+offset,1,rlebuffsize-offset,f);
-    if (feof(f) && offset<rlebuffsize){ if(x) *x=SGIRGB_ERR_WRONG_FILE; sgirgb_free(tabstart); sgirgb_free(rlebuff); return sgi_close_and_return(f,outData); }
+    //if (feof(f) && offset<rlebuffsize){ if(x) *x=SGIRGB_ERR_WRONG_FILE; sgirgb_free(tabstart); sgirgb_free(rlebuff); return sgi_close_and_return(f,outData); }
 
     // decode RLE
     // first all scanlines of channel 0, then all of channel 1 ... 
