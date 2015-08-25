@@ -1,21 +1,13 @@
 
-// #ifdef _DEBUG
-// #include <vld.h>
-// #endif
-// #define REPORTMEMLEAKS // empty by default
-// #ifdef _MSC_VER
-// # define _CRTDBG_MAP_ALLOC
-// # include <crtdbg.h>
-// # ifdef _DEBUG
-// #   undef REPORTMEMLEAKS
-// #   define REPORTMEMLEAKS _CrtDumpMemoryLeaks();
-// # endif
-// #endif
+#if defined(_DEBUG) && !defined(_WIN64)
+#include <vld.h>
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
-//#define FLT_NO_OPNAMES
-//#define FLT_COMPACT_FACES
+#define FLT_NO_OPNAMES
+//#define FLT_LEAN_FACES
+#define FLT_UNIQUE_FACES
 #define FLT_IMPLEMENTATION
 #include <flt.h>
 #include <cstdint>
@@ -81,6 +73,7 @@ struct fltThreadPool
   bool getNextTask(fltThreadTask* t);
   void addNewTask(const fltThreadTask& task);
   void deinit();
+  bool isWorking(){ return !tasks.empty() || workingTasks>0; }
 
   fltThreadPoolContext ctx;
   std::vector<std::string> searchpaths;
@@ -97,117 +90,6 @@ double fltGetTime();
 bool fltExtensionIsImg(const char* filename);
 bool fltExtensionIs(const char* filename, const char* ext);
 void fltPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes);
-
-int fltCallbackExtRef(flt_node_extref* extref, flt* of, void* userdata)
-{
-  char* finalname = flt_extref_prepare(extref,of);
-  if ( finalname )
-  {
-    fltThreadTask task(fltThreadTask::TASK_FLT, finalname, extref->of, of->ctx->opts); //  read ref in parallel
-    reinterpret_cast<fltThreadPool*>(userdata)->addNewTask(task);
-    flt_safefree(finalname);
-  }
-  return 1;
-}
-
-void read_with_callbacks_mt(const char* filename)
-{
-  double t0=fltGetTime();
-  flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
-  flt* of=(flt*)flt_calloc(1,sizeof(flt));
-
-  fltThreadPool tp;
-  tp.ctx.numThreads = std::thread::hardware_concurrency();
-  tp.init();
-
-//   fltu16 vtxstream[4]={ 0 };
-//   vtxstream[0]=flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12); 
-//   vtxstream[1]=flt_vtx_stream_enc(FLT_VTX_COLOR    ,12, 4);
-//   vtxstream[2]=flt_vtx_stream_enc(FLT_VTX_NORMAL   ,16,12);
-//   vtxstream[3]=0;
-
-  // configuring read options
-  opts->palflags = FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_SOURCE;
-  opts->hieflags = FLT_OPT_HIE_HEADER | FLT_OPT_HIE_ALL;
-  opts->cb_extref = fltCallbackExtRef;
-  opts->cb_user_data = &tp;
-
-  // master file task
-  fltThreadTask task(fltThreadTask::TASK_FLT, filename, of, opts);
-  tp.addNewTask(task);  
-
-  // wait until cores finished
-  do
-  {
-    std::this_thread::sleep_for(std::chrono::milliseconds(75));    
-  } while ( !tp.tasks.empty() || tp.workingTasks>0 );
-
-  char tmp[256]; sprintf_s(tmp, "Time: %g secs", (fltGetTime()-t0)/1000.0);
-  printf( "\n%s\n",tmp);
-  printf("nfaces total : %d\n", TOTALNFACES);
-  printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
-  MessageBoxA(NULL,tmp,"continue",MB_OK);
-  flt_release(of);
-  flt_safefree(of);
-  flt_safefree(opts);
-
-  tp.deinit();
-}
-
-void print_hie(const char* filename)
-{
-  double t0;
-  flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
-  flt* of=(flt*)flt_calloc(1,sizeof(flt));
-
-  // actual read
-  opts->palflags |= FLT_OPT_PAL_ALL;
-  opts->hieflags |= /*FLT_OPT_HIE_RESERVED |  FLT_OPT_HIE_NO_NAMES|*/FLT_OPT_HIE_EXTREF_RESOLVE|FLT_OPT_HIE_ALL;
-  t0=fltGetTime(); 
-
-  flt_load_from_filename(filename,of,opts);
-
-  //std::set<uint64_t> done;
-  //int counterctx=0;
-  //fltPrint(of,0,done, &counterctx);
-
-  printf("maxvlist: %d\n", maxvlist );
-  printf("nfaces total : %d\n", TOTALNFACES);
-  printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
-  printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
-  MessageBoxA(NULL,"continue","continue",MB_OK);
-  flt_release(of);
-  flt_safefree(of);
-  flt_safefree(opts);
-}
-
-void read_with_resolve(const char* filename)
-{
-  double t0;
-  flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
-  flt* of=(flt*)flt_calloc(1,sizeof(flt));
-
-  //   fltu16 vtxstream[4]={ 0 };
-  //   vtxstream[0]=flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12); 
-  //   vtxstream[1]=flt_vtx_stream_enc(FLT_VTX_COLOR    ,12, 4);
-  //   vtxstream[2]=flt_vtx_stream_enc(FLT_VTX_NORMAL   ,16,12);
-  //   vtxstream[3]=0;
-
-  // configuring read options
-  opts->palflags = 0;//FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_SOURCE;
-  opts->hieflags = /*FLT_OPT_HIE_HEADER | */ FLT_OPT_HIE_ALL | FLT_OPT_HIE_EXTREF_RESOLVE;
-
-  // actual read
-  t0=fltGetTime();
-
-  flt_load_from_filename(filename,of,opts);
-  
-  printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
-  flt_release(of);
-  flt_safefree(of);
-  flt_safefree(opts);
-}
-
 
 void fltThreadPool::init()
 {
@@ -326,13 +208,13 @@ double fltGetTime()
 void fltIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
 void fltPrintNode(flt_node* n, int d)
 {
-  static const char* names[]={"BASE","EXTREF","GROUP","OBJECT","MESH","LOD"};
+  static const char* names[]={"BASE","EXTREF","GROUP","OBJECT","MESH","LOD","FACE", "VLIST"};
   if ( !n ) return;
 
   // my siblings and children
   do
   {
-    fltIndent(d); printf( "(%s) %s (%d/%d) %s\n", names[n->type], n->name?n->name:"", n->face_count, n->index_count, n->index_count/3!=n->face_count ? "**":"" );
+    fltIndent(d); printf( "(%s) %s (%d/%d)\n", names[n->type], n->name?n->name:"", n->face_count, n->index_count);
     fltPrintNode(n->child_head,d+1);
     n = n->next;
   }while(n);
@@ -340,6 +222,7 @@ void fltPrintNode(flt_node* n, int d)
 
 void fltPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes)
 {
+  if ( !of || of->loaded != FLT_LOADED ) return;
   // header
   printf( "\n" );
   fltIndent(d); printf( "%s\n", of->filename);
@@ -390,22 +273,104 @@ void fltPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes)
   }
 }
 
+//////////////////////////////////////////////////////////////////////////
+// This callback is a good place to build a full path to the external reference
+// It can be done by building a dictionary with a recursive listing of *.flt
+// under the original filename (master) directory, and here build the finalname
+//////////////////////////////////////////////////////////////////////////
+int fltCallbackExtRef(flt_node_extref* extref, flt* of, void* userdata)
+{
+  char* finalname = flt_extref_prepare(extref,of);
+  if ( finalname )
+  {
+    fltThreadTask task(fltThreadTask::TASK_FLT, finalname, extref->of, of->ctx->opts); //  read ref in parallel
+    reinterpret_cast<fltThreadPool*>(userdata)->addNewTask(task);
+    flt_safefree(finalname);
+  }
+  return 1;
+}
+
+void read_with_callbacks_mt(const char* filename)
+{
+  double t0=fltGetTime();
+  flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
+  flt* of=(flt*)flt_calloc(1,sizeof(flt));
+
+  fltThreadPool tp;
+  tp.ctx.numThreads = std::thread::hardware_concurrency();
+  tp.init();
+
+  //   fltu16 vtxstream[4]={ 0 };
+  //   vtxstream[0]=flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12); 
+  //   vtxstream[1]=flt_vtx_stream_enc(FLT_VTX_COLOR    ,12, 4);
+  //   vtxstream[2]=flt_vtx_stream_enc(FLT_VTX_NORMAL   ,16,12);
+  //   vtxstream[3]=0;
+
+  // configuring read options
+  opts->palflags = FLT_OPT_PAL_ALL;
+  opts->hieflags = FLT_OPT_HIE_ALL;
+  opts->dfaces_size = 1543;
+  opts->cb_extref = fltCallbackExtRef;
+  opts->cb_user_data = &tp;
+
+  // master file task
+  fltThreadTask task(fltThreadTask::TASK_FLT, filename, of, opts);
+  tp.addNewTask(task);  
+
+  // wait until cores finished
+  do
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    
+  } while ( tp.isWorking() );
+
+  // printing
+//   std::set<uint64_t> done;
+//   int counterctx=0;
+//   fltPrint(of,0,done, &counterctx);
+
+  char tmp[256]; sprintf_s(tmp, "Time: %.4g secs", (fltGetTime()-t0)/1000.0);
+  printf( "\n%s\n",tmp);
+  printf("nfaces total : %d\n", TOTALNFACES);
+  printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
+  MessageBoxA(NULL,tmp,"continue",MB_OK);
+  flt_release(of);
+  flt_safefree(of);
+  flt_safefree(opts);
+
+  tp.deinit();
+}
+
+void print_hie(const char* filename)
+{
+  double t0;
+  flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
+  flt* of=(flt*)flt_calloc(1,sizeof(flt));
+
+  // actual read
+  opts->palflags |= FLT_OPT_PAL_ALL;
+  opts->hieflags |= /*FLT_OPT_HIE_RESERVED |  FLT_OPT_HIE_NO_NAMES|*/FLT_OPT_HIE_EXTREF_RESOLVE|FLT_OPT_HIE_ALL;
+  opts->dfaces_size = 1543;
+  t0=fltGetTime(); 
+
+  flt_load_from_filename(filename,of,opts);
+
+  std::set<uint64_t> done;
+  int counterctx=0;
+  fltPrint(of,0,done, &counterctx);
+
+  printf("nfaces total : %d\n", TOTALNFACES);
+  printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
+  printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
+  MessageBoxA(NULL,"continue","continue",MB_OK);
+  flt_release(of);
+  flt_safefree(of);
+  flt_safefree(opts);
+}
+
 int main(int argc, const char** argv)
 {
-  flt_array* arr;
-  flt_array_create(&arr,5,FLT_NULL);
-  for ( int i=0;i<10;++i )
-  {
-    flt_array_push_back(arr, (void*)i);
-  }
-  flt_array_destroy(&arr);
-
-  print_hie("../../../data/camp/master.flt");
-  //read_with_callbacks_mt("../../../data/utah/master.flt");
-  //read_with_callbacks_mt("../../../data/camp/master.flt");
-  //read_with_resolve("../../../data/camp/master.flt");  
-
-  //testdict("../../../data/words.txt");
-  
+  //print_hie("../../../data/camp/master.flt");
+  read_with_callbacks_mt("../../../data/camp/master.flt");
+  //read_with_callbacks_mt("../../../data/Terrain_Standard/ds205-townbuildings_lowres/master_of_town.flt");
   return 0;
 }
