@@ -346,7 +346,6 @@ int main(int argc, const char** argv)
   }
 
   // wait before processing in main thread
-  int ct=0; // for big files at least shows something when verbose and stuck reading
   do
   {
     if ( !f2dTP.ctx.verbose )
@@ -360,15 +359,7 @@ int main(int argc, const char** argv)
       int eta=(int)(avg*f2dTP.tasks.size());
       int es=eta%60, em=(eta/60)%60, eh=(eta/3600);
       printf("%02d:%02d:%02d - (%.0f%%) %d - ETA: %02d:%02d:%02d", h,m,s,100.0f-pct, f2dTP.tasks.size(), eh,em,es );
-    }
-    {
-      ct++;
-      if (ct>2)
-      {
-        printf("Current tasks: %d\n", (int)f2dTP.workingTasks);
-        ct=0;
-      }
-    }
+    }    
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));    
   }while ( !f2dTP.tasks.empty() || f2dTP.workingTasks>0 );
 
