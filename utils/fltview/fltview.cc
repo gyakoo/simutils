@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #define FLT_NO_OPNAMES
 //#define FLT_LEAN_FACES
-#define FLT_UNIQUE_FACES
+//#define FLT_UNIQUE_FACES
 #define FLT_IMPLEMENTATION
 #include <flt.h>
 #include <cstdint>
@@ -208,13 +208,13 @@ double fltGetTime()
 void fltIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
 void fltPrintNode(flt_node* n, int d)
 {
-  static const char* names[]={"BASE","EXTREF","GROUP","OBJECT","MESH","LOD","FACE", "VLIST"};
+  static const char* names[]={"NONE","BASE","EXTREF","GROUP","OBJECT","MESH","LOD","FACE", "VLIST"};
   if ( !n ) return;
 
   // my siblings and children
   do
   {
-    fltIndent(d); printf( "(%s) %s (%d)\n", names[n->type], n->name?n->name:"", n->face_count);
+    fltIndent(d); printf( "(%s) %s\n", names[n->type], n->name?n->name:"");
     fltPrintNode(n->child_head,d+1);
     n = n->next;
   }while(n);
@@ -332,6 +332,7 @@ void read_with_callbacks_mt(const char* filename)
   printf( "\n%s\n",tmp);
   printf("nfaces total : %d\n", TOTALNFACES);
   printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
+  printf("nindices total: %d\n", TOTALINDICES);
   MessageBoxA(NULL,tmp,"continue",MB_OK);
   flt_release(of);
   flt_safefree(of);
@@ -361,6 +362,7 @@ void print_hie(const char* filename)
   printf("nfaces total : %d\n", TOTALNFACES);
   printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
   printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
+  printf("nindices total: %d\n", TOTALINDICES);
   MessageBoxA(NULL,"continue","continue",MB_OK);
   flt_release(of);
   flt_safefree(of);
