@@ -5,15 +5,15 @@ local examples = { "flt2dds" }
 solution "flt2dds"
 	location ( "build" )
 	configurations { "Debug", "Release" }
-	platforms {"native", "x64", "x32"}
+	platforms {"x64", "x32"}
   startproject "flt2dds"  
   
   for k,v in ipairs(examples) do
     project(tostring(v))
       kind "ConsoleApp"
       language "C++"
-      files { "src/*.h", "src/*.cpp", "src/*.c", "../../extern/nvtt/include/*.*", "../../extern/stb_image.h", "../../flt/flt_sgirgb.h" }
-      includedirs { "src", "../../extern/", "../../extern/nvtt/include/", "../../flt/" }
+      files { "**.h", "**.cpp", "**.c", "**.cc", "../../extern/nvtt/include/*.*", "../../extern/stb_image.h", "../../src/flt_sgirgb.h" }
+      includedirs { "./", "../../extern/", "../../extern/nvtt/include/", "../../src/" }
       links {"nvtt.lib"}      
       --[[
       -- NOTE: ADD THIS POST-BUILD COMMAND STEP TO THE SOLUTION ******

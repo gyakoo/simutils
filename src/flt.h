@@ -48,10 +48,13 @@ DOCUMENTATION
 - Define FLT_STACKARRAY_SIZE for a different default stack array size (when passing flt_opts.stacksize=0)
 - Define FLT_COMPACT_FACES for a smaller footprint version of face record with most important data. see flt_face.
 - Define FLT_DICTFACES_SIZE for a different default hash table size for faces when passing flt_opts.dfaces_size=0.
-- Define FLT_FACES_PALETTE for an optimized way to store faces with indices array per unique face.
+- Define FLT_UNIQUE_FACE for an optimized way to store faces (develop more doc about this)
+- Define FLT_ALIGNED to use aligned version of malloc/free (when not implementing custom flt_malloc/...)
+- Define FLT_INDICES_SIZE for a default initial capacity of the global indices array (when using FLT_UNIQUE_FACES only)
+          and flt_opts.indices_size=0.
 
 (Additional info)
-- This library is thread-safe, all the data is in stack. If there's some static, it should be read-only const
+- Calls to load functions are thread safe
 - For the vertex palette, enough memory is reserved to avoid dynamic further allocations. This is done by
     dividing the size of the palette by the smallest possible vertex, to compute an upper bound of no. of
     vertices. Then allocate this no. of vertices for the bigger possible vertex. 
@@ -117,7 +120,7 @@ DOCUMENTATION
 #define FLT_OPT_PAL_VERTEX        (1<<15) // last node: vertex
 
 #define FLT_OPT_PAL_VTX_SOURCE    (1<<16) // use original vertex format
-#define FLT_OPT_PAL_ALL           (0x7fff)// from bit 0 to 15
+#define FLT_OPT_PAL_ALL           (0xffff)// from bit 0 to 15
 
 //hierarchy/node flags (filter parsing of nodes and type of hierarchy)
 #define FLT_OPT_HIE_GROUP         (1<<0) // node first
@@ -321,8 +324,8 @@ extern "C" {
     struct flt_node* child_head;
     struct flt_node* child_tail;  // last for shortcut adding
 #ifdef FLT_UNIQUE_FACES
-    fltu32 start_ndx;
-    fltu32 count_ndx;
+    fltu64* ndx_pairs;
+    fltu32 ndx_pairs_count;
 #endif
     fltu16 type;                  // one of FLT_NODE_*
     fltu16 child_count;           // number of children
@@ -350,6 +353,7 @@ extern "C" {
     fltu8 light_mode;
     fltu8 lod_gen;
     fltu8 linestyle_ndx;
+    char* name;
 #else
     fltu32 abgr;                  
     flti16 texbase_pat;           
@@ -360,6 +364,12 @@ extern "C" {
     fltu8 billb;                  
 #endif
   }flt_face;
+
+#ifndef FLT_LEAN_FACES
+# define FLT_FACESIZE_HASH (sizeof(flt_face)-sizeof(char*))
+#else
+# define FLT_FACESIZE_HASH sizeof(flt_face)
+#endif
 
   typedef struct flt_node_extref
   {
@@ -486,16 +496,13 @@ extern "C" {
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef FLT_IMPLEMENTATION
-#if defined(__x86_64__)    || \
-  defined(_M_X64)        || \
-  defined(__aarch64__)   || \
-  defined(__64BIT__)     || \
-  defined(__mips64)      || \
-  defined(__powerpc64__) || \
-  defined(__ppc64__)
+#if defined(__x86_64__) || defined(_M_X64)  ||  defined(__aarch64__)   || defined(__64BIT__) || \
+  defined(__mips64)     || defined(__powerpc64__) || defined(__ppc64__)
 #	define FLT_PLATFORM_64
+# define FLT_ALIGNMENT 16
 #else
 #	define FLT_PLATFORM_32
+# define FLT_ALIGNMENT 8
 #endif //
 
 #if defined(_DEBUG) || defined(DEBUG)
@@ -521,19 +528,34 @@ extern "C" {
 #error "Must define all or none of flt_malloc, flt_free, flt_calloc, flt_realloc"
 #endif
 
-#ifndef flt_malloc
-#define flt_malloc(sz) malloc(sz)
+#ifdef FLT_ALIGNED
+#   ifndef flt_malloc
+#     define flt_malloc(sz) _aligned_malloc(sz,FLT_ALIGNMENT)
+#   endif
+#   ifndef flt_free
+#     define flt_free(p) _aligned_free(p)
+#   endif
+#   ifndef flt_calloc
+#     define flt_calloc(count,size) flt_aligned_calloc(count,size,FLT_ALIGNMENT)
+#   endif
+#   ifndef flt_realloc
+#     define flt_realloc(p,sz) _aligned_realloc(p,sz,FLT_ALIGNMENT)
+#   endif
+#else
+#   ifndef flt_malloc
+#     define flt_malloc(sz) malloc(sz)
+#   endif
+#   ifndef flt_free
+#     define flt_free(p) free(p)
+#   endif
+#   ifndef flt_calloc
+#     define flt_calloc(count,size) calloc(count,size)
+#   endif
+#   ifndef flt_realloc
+#     define flt_realloc(p,sz) realloc(p,sz)
+#   endif
 #endif
-#ifndef flt_free
-#define flt_free(p) free(p)
-#endif
-#ifndef flt_calloc
-#define flt_calloc(count,size) calloc(count,size)
-#endif
-#ifndef flt_realloc
-#define flt_realloc(p,sz) realloc(p,sz)
-#endif
-
+#define flt_strdup(s) flt_strdup_internal(s)
 #define flt_safefree(p) { if (p){ flt_free(p); (p)=0;} }
 
 #ifdef FLT_NO_MEMOUT_CHECK
@@ -549,7 +571,6 @@ extern "C" {
 #define FLT_NULL (0)
 #define FLT_TRUE (1)
 #define FLT_FALSE (0)
-#define flt_strdup(s) flt_strdup_internal(s)
 #define fltopt 
 #define FLTMAKE16(hi8,lo8)    ( ((fltu16)(hi8)<<8)   | (fltu16)(lo8) )
 #define FLTMAKE32(hi16,lo16)  ( ((fltu32)(hi16)<<16) | (fltu32)(lo16) )
@@ -572,14 +593,6 @@ extern "C" {
 
 #ifndef FLT_ARRAY_INITCAP            // init capacity for any created array when passed capacity=0
 #define FLT_ARRAY_INITCAP 1024
-#endif
-
-#ifndef FLT_INDICESARRAY_INITCAP     // init capacity for indices array
-# ifdef FLT_UNIQUE_FACES
-#  define FLT_INDICESARRAY_INITCAP 32
-# else
-#  define FLT_INDICESARRAY_INITCAP 8
-# endif
 #endif
 
 #ifndef FLT_DICTFACES_SIZE          // this size is for the dict of faces for *every* flt file
@@ -784,6 +797,9 @@ void flt_array_ensure(flt_array* arr, fltu32 count_new_elements); // makes sure 
 // Forward declarations of functions
 ////////////////////////////////////////////////////////////////////////////////////////////////
 char* flt_strdup_internal(const char* str);
+#ifdef FLT_ALIGNED
+void* flt_aligned_calloc(size_t nelem, size_t elsize, size_t alignment);
+#endif
 int flt_err(int err, flt* of);
 int flt_read_ophead(fltu16 op, flt_op* data, FILE* f);
 void flt_swap_desc(void* data, flt_end_desc* desc);
@@ -800,7 +816,7 @@ flt_node* flt_node_create(flt* of, int nodetype, const char* name);
 void flt_release_node(flt_node* n);
 void flt_resolve_all_extref(flt* of);
 #ifdef FLT_UNIQUE_FACES
-void flt_face_destroy_indices(char* key, void* faceptr);
+void flt_face_destroy_name(char* key, void* faceptr);
 #endif
 
 FLT_RECORD_READER(flt_reader_header);                 // FLT_OP_HEADER
@@ -1478,6 +1494,8 @@ FLT_RECORD_READER(flt_reader_face)
   flt_getswapi32(face->flags,40);
   face->billb = (fltu8)*(ctx->tmpbuff+21);
 #ifndef FLT_LEAN_FACES
+  if ( !(ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES) )
+    face->name = flt_strdup(ctx->tmpbuff);
   flt_getswapi32(face->ir_color,8);
   flt_getswapi32(face->ir_mat,32);
   flt_getswapi16(face->smc_id,28);
@@ -1504,9 +1522,9 @@ FLT_RECORD_READER(flt_reader_face)
 #ifdef FLT_UNIQUE_FACES
   // if we compiled for face palettes, let's do the hash thing 
   // we store the face hash in every face node
-  facehash=flt_dict_hash_face_djb2((const unsigned char*)face, sizeof(flt_face));
+  facehash=flt_dict_hash_face_djb2((const unsigned char*)face, FLT_FACESIZE_HASH);
   // any face with same hash exists?
-  face=(flt_face*)flt_dict_geth(ctx->dictfaces, (const char*) face, sizeof(flt_face), facehash, &hashentry);
+  face=(flt_face*)flt_dict_geth(ctx->dictfaces, (const char*) face, FLT_FACESIZE_HASH, facehash, &hashentry);
   if ( !face )
   {
     flt_atomic_inc(&TOTALUNIQUEFACES);
@@ -1514,7 +1532,7 @@ FLT_RECORD_READER(flt_reader_face)
     face = (flt_face*)flt_malloc(sizeof(flt_face));
     flt_mem_check(face,of->errcode);
     *face = tmpf;
-    flt_dict_insert(ctx->dictfaces, (const char*)face, face, sizeof(flt_face), facehash, &hashentry);
+    flt_dict_insert(ctx->dictfaces, (const char*)face, face, FLT_FACESIZE_HASH, facehash, &hashentry);
   }
 
   flt_stack_popn(ctx->stack);
@@ -1540,40 +1558,79 @@ FLT_RECORD_READER(flt_reader_vertex_list)
   flt_context* ctx=of->ctx;
   flt_node_vlist* vlistnode;
   int leftbytes = oh->length-sizeof(flt_op);
-  fltu32 n_inds=(oh->length-4)/4;
+  fltu32 n_inds=(oh->length-4)>>2;
   fltu32 i;
 
 #ifdef FLT_UNIQUE_FACES
   const fltu32 max_ninds_read = sizeof(ctx->tmpbuff)/4; // max no of indices can be read at once
   fltu32* inds=(fltu32*)ctx->tmpbuff; // indices array
-  fltu32 leftinds=n_inds; // no of indices left to read
-  fltu32 readb; // last read bytes
-  
-  // we get the top not null, which is my hash entry value for the unique face in the dict
+  fltu32 oneind;
+  fltu64* pair;
+  fltu32 thisndxstart,thisndxend,ndxstart,ndxend;
+  flt_node* parentn;
+
+  if ( !n_inds || !leftbytes ) return 0;
+
+  // we get the top not null, which is my hash entry number for the unique face in the dict
+  FLT_ASSERT(n_inds<max_ninds_read);
   fltu32 hashe = flt_stack_top32_not_null(ctx->stack);
   if ( hashe != 0xffffffff )
   {
-    // make sure destination has enough memory
-    flt_array_ensure(of->indices, n_inds); 
-
-    FLT_ASSERT(max_ninds_read>=n_inds);
-    // this nasty loop is to avoid a secondary buffer allocation, and reuse the context->tmpbuff
-    while (leftinds>0)
+    // get the parent node from stack
+    parentn=flt_stack_topn_not_null(ctx->stack);
+    FLT_ASSERT(parentn && "Vertex list with no parent node, skipping");
+    if ( parentn )
     {
-      readb = (int)fread(ctx->tmpbuff, 1, flt_min(max_ninds_read,leftbytes),ctx->f);
-      leftbytes -= readb;
-      leftinds -= readb >> 2;
+      thisndxstart=of->indices->size;
 
-      // we got this batch of indices, let's encode it
-      for (i=0;i<readb>>2;++i)
+      // make sure indices array has enough memory for new indices
+      flt_array_ensure(of->indices, n_inds); 
+
+      // only read the capacity of our temporary buffer
+      FLT_ASSERT(n_inds <= max_ninds_read); // increase tmpbuff or ignore other indices      
+      n_inds = flt_min(n_inds,max_ninds_read);
+      leftbytes -= (int)fread(ctx->tmpbuff, 1, n_inds<<2,ctx->f);
+
+      // TRIANGULATE HERE FOR > 3 INDICES !!
+      // we got this batch of indices, let's swap it and encode it with the hash entry code
+      for (i=0;i<n_inds;++i)
       {
-        flt_swap32(inds+i);
-        flt_array_push_back(of->indices, FLTMAKE64(hashe,inds[i]));
+        oneind = inds[i];
+        flt_swap32(&oneind);
+        flt_array_push_back(of->indices, FLTMAKE64(hashe,oneind));
       }
+
+      thisndxend = of->indices->size-1; // last index
+
+      // if no pairs (start/end) creates one
+      if (!parentn->ndx_pairs)
+      {
+        pair = parentn->ndx_pairs = (fltu64*)flt_malloc(sizeof(fltu64));        
+        parentn->ndx_pairs_count=1;
+      }
+      else
+      {
+        // there are pairs, check if we need to add one more or concat to last one
+        pair = parentn->ndx_pairs + (parentn->ndx_pairs_count-1);
+        FLTGET32(*pair, ndxstart, ndxend);
+        if ( ndxend+1 == thisndxstart )
+        {
+          // reuse last pair, same start, new end
+          thisndxstart=ndxstart;
+        }
+        else
+        {
+          // add new pair (regrow array with one more element) (should i double capacity?)
+          i=parentn->ndx_pairs_count;
+          parentn->ndx_pairs = (fltu64*)flt_realloc(parentn->ndx_pairs, sizeof(fltu64)*(i+1));
+          pair += i; // set the last pair
+          parentn->ndx_pairs_count= i+1;
+        }
+      }
+
+      *pair = FLTMAKE64(thisndxstart,thisndxend);
     }
-  }
-  // in UNIQUE mode, we don't store a node for the vertex list.
-  // instead we add the indices to the unique face's indices array
+  }  
 #else
   // using normal vertex list node, create the node, create the indices array and add the node
   if ( n_inds )
@@ -1642,7 +1699,7 @@ void flt_release(flt* of)
   {
 #ifdef FLT_UNIQUE_FACES
     // dict of faces
-    flt_dict_destroy(&of->ctx->dictfaces, FLT_TRUE, flt_face_destroy_indices);
+    flt_dict_destroy(&of->ctx->dictfaces, FLT_TRUE, flt_face_destroy_name);
 #endif
     // stack
     flt_stack_destroy(&of->ctx->stack);
@@ -1663,6 +1720,9 @@ void flt_release_node(flt_node* n)
 {
   flt_node *next, *cur;
   flt_node_extref* eref;
+#if !defined(FLT_UNIQUE_FACES) && !defined(FLT_LEAN_FACES)
+  flt_node_face* nodeface;
+#endif
 #ifndef FLT_UNIQUE_FACES
   flt_node_vlist* vlist;
 #endif
@@ -1670,6 +1730,10 @@ void flt_release_node(flt_node* n)
   if (!n) return;
   
   flt_safefree(n->name);  
+
+#ifdef FLT_UNIQUE_FACES
+  flt_safefree(n->ndx_pairs);
+#endif
 
   // children
   cur=next=n->child_head;
@@ -1694,6 +1758,13 @@ void flt_release_node(flt_node* n)
       }
       eref=FLT_NULL;
     }break;
+#if !defined(FLT_UNIQUE_FACES) && !defined(FLT_LEAN_FACES) // if there are node of large faces, release name
+    case FLT_NODE_FACE:
+      {
+        nodeface = (flt_node_face*)n;        
+        flt_safefree(nodeface->face.name);
+      }break;
+#endif
 #ifndef FLT_UNIQUE_FACES
     case FLT_NODE_VLIST:
     {
@@ -1707,11 +1778,13 @@ void flt_release_node(flt_node* n)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef FLT_UNIQUE_FACES
-void flt_face_destroy_indices(char* key, void* faceptr)
+void flt_face_destroy_name(char* key, void* faceptr)
 {
   key=key;//unused
-  flt_face* face=(flt_face*)faceptr;
-  //flt_array_destroy(&face->indices);
+#ifndef FLT_LEAN_FACES
+  flt_face* f = (flt_face*)faceptr;
+  flt_safefree(f->name);
+#endif
 }
 #endif
 
@@ -2224,6 +2297,19 @@ char* flt_strdup_internal(const char* str)
   return outstr;
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+#ifdef FLT_ALIGNED
+void* flt_aligned_calloc(size_t nelem, size_t elsize, size_t alignment)
+{
+  void* mem;
+  elsize *= nelem;
+  mem=_aligned_malloc(elsize,alignment);
+  if (mem)
+    memset(mem,0,elsize);
+  return mem;
+}
+#endif
 ////////////////////////////////////////////////////////////////////////////////////////////////
 //                                DICTIONARY
 ////////////////////////////////////////////////////////////////////////////////////////////////

@@ -14,5 +14,8 @@ premake5 vs2012
 
 
 :end
+
+xcopy ..\..\extern\vld\bin\Win32\*.* build\bin\x32\debug\ /Y
+xcopy ..\..\extern\vld\bin\Win64\*.* build\bin\x64\debug\ /Y
 echo.
 pause

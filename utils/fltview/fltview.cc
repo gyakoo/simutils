@@ -6,7 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #define FLT_NO_OPNAMES
-//#define FLT_LEAN_FACES
+#define FLT_LEAN_FACES
+//#define FLT_ALIGNED
 #define FLT_UNIQUE_FACES
 #define FLT_IMPLEMENTATION
 #include <flt.h>
@@ -83,6 +84,7 @@ struct fltThreadPool
   std::mutex mtxTasks;
   std::mutex mtxFiles;
   std::atomic_int workingTasks;
+  std::atomic_int nfiles;
   bool finish;
 };
 
@@ -97,6 +99,7 @@ void fltThreadPool::init()
   finish=false;
   threads.reserve(ctx.numThreads);
   workingTasks=0;
+  nfiles=0;
   for(int i = 0; i < ctx.numThreads; ++i)
     threads.push_back(new std::thread(&fltThreadPool::runcode,this));
 }
@@ -283,9 +286,11 @@ int fltCallbackExtRef(flt_node_extref* extref, flt* of, void* userdata)
   char* finalname = flt_extref_prepare(extref,of);
   if ( finalname )
   {
+    fltThreadPool* tp=reinterpret_cast<fltThreadPool*>(userdata);
     fltThreadTask task(fltThreadTask::TASK_FLT, finalname, extref->of, of->ctx->opts); //  read ref in parallel
-    reinterpret_cast<fltThreadPool*>(userdata)->addNewTask(task);
+    tp->addNewTask(task);
     flt_safefree(finalname);
+    ++tp->nfiles;
   }
   return 1;
 }
@@ -300,20 +305,23 @@ void read_with_callbacks_mt(const char* filename)
   tp.ctx.numThreads = std::thread::hardware_concurrency();
   tp.init();
 
-  //   fltu16 vtxstream[4]={ 0 };
-  //   vtxstream[0]=flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12); 
-  //   vtxstream[1]=flt_vtx_stream_enc(FLT_VTX_COLOR    ,12, 4);
-  //   vtxstream[2]=flt_vtx_stream_enc(FLT_VTX_NORMAL   ,16,12);
-  //   vtxstream[3]=0;
+  fltu16 vtxstream[]={
+   flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12) 
+//   ,flt_vtx_stream_enc(FLT_VTX_COLOR    ,12, 4)
+//   ,flt_vtx_stream_enc(FLT_VTX_NORMAL   ,16,12)
+  ,flt_vtx_stream_enc(FLT_VTX_UV0      ,12, 8)
+  ,FLT_NULL};
 
   // configuring read options
   opts->palflags = FLT_OPT_PAL_ALL;
   opts->hieflags = FLT_OPT_HIE_ALL;
   opts->dfaces_size = 1543;
+  opts->vtxstream = vtxstream;
   opts->cb_extref = fltCallbackExtRef;
   opts->cb_user_data = &tp;
 
   // master file task
+  tp.nfiles=1;
   fltThreadTask task(fltThreadTask::TASK_FLT, filename, of, opts);
   tp.addNewTask(task);  
 
@@ -330,6 +338,7 @@ void read_with_callbacks_mt(const char* filename)
 
   char tmp[256]; sprintf_s(tmp, "Time: %.4g secs", (fltGetTime()-t0)/1000.0);
   printf( "\n%s\n",tmp);
+  printf("nfiles total: %d\n", tp.nfiles);
   printf("nfaces total : %d\n", TOTALNFACES);
   printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
   printf("nindices total: %d\n", TOTALINDICES);
@@ -373,6 +382,7 @@ int main(int argc, const char** argv)
 {
   //print_hie("../../../data/camp/master.flt");
   read_with_callbacks_mt("../../../data/camp/master.flt");
+  //read_with_callbacks_mt("../../../data/titanic/titanic.flt");
   //read_with_callbacks_mt("../../../data/Terrain_Standard/ds205-townbuildings_lowres/master_of_town.flt");
   return 0;
 }
