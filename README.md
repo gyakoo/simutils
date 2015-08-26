@@ -9,7 +9,9 @@ library    | lastest version | category | description
 **com_cigi33.h** | 0.1a | communications | Common Image Generator Interface 3.3 implementation
 **proj.h** | 0.1a | projections | Functions to convert between different projections
 **flt.h** | 0.1a | openflight | Load geometry and other metadata from Openflight files
-**flt_sgirgb.h** | 0.1a | openflight | Decode SGI RGB/RGBA format from file. RLE and Verbatim modes supported.
+**sgi.h** | 0.1a | openflight | Decode SGI RGB/RGBA format from file. RLE and Verbatim modes supported
+**rend.h** | 0.1a | rendering | Rendering functions, supporting DX11 and OpenGL
+**fltr.h** | 0.1a | openfligh | Specific function for Openflight Rendering
 
 # Utils
 Set of applications and small tools making use of these libraries.
@@ -18,7 +20,7 @@ A single-cpp file C++11 tool to convert all imagery data from Openflight graph i
 See <a href="https://github.com/gyakoo/simutils/tree/master/utils/flt2dds">flt2dds readme</a> for more information.
 
 ### fltviewer
-Small OpenGL FLT viewer.
+Small OpenGL FLT viewer to showcase the use of flt.h.
 
 # Why single file headers?
 
