@@ -72,7 +72,7 @@ DOCUMENTATION
 
 #ifdef _MSC_VER
 #include <Windows.h>
-#pragma warning(disable:4244 4100 4996 4706 4091)
+#pragma warning(disable:4244 4100 4996 4706 4091 4310)
 #endif
 
 /* 
@@ -224,6 +224,7 @@ extern "C" {
   typedef struct flt_node_lod;
   typedef struct flt_node_face;
   typedef struct flt_face;
+  typedef struct flt_array;
   typedef int (*flt_callback_texture)(struct flt_pal_tex* texpal, struct flt* of, void* user_data);
   typedef int (*flt_callback_extref)(struct flt_node_extref* extref, struct flt* of, void* user_data);
   
@@ -256,9 +257,8 @@ extern "C" {
     fltu32 hieflags;                          // hierarchy/node flags (FLT_OPT_HIE_*)
     fltu16* vtxstream;                        // optional custom forced vertex format or null for original
     fltu16 stacksize;                         // optional stack size (no of elements). 0 to use FLT_STACKARRAY_SIZE    
-//#ifdef FLT_FACES_PALETTE
     fltu32 dfaces_size;                       // optional dict faces hash table size. 0 to use FLT_DICTFACES_SIZE
-//#endif
+    fltu32 indices_size;                      // optional array initial capacity for indices. 0 to use FLT_INDICES_SIZE
 
     const char** search_paths;                // optional custom array of search paths ordered. last element should be null.
     flt_callback_extref   cb_extref;          // optional callback when an external ref is found
@@ -292,6 +292,9 @@ extern "C" {
     struct flt_hie* hie;                      // hierarchy 
     fltu32 loaded;                            // 0:not loaded 1:loading 2:loaded
     fltatom32 ref;
+#ifdef FLT_UNIQUE_FACES
+    flt_array* indices;
+#endif
 
     int errcode;                              // error code (see flt_get_err_reason)
     struct flt_context* ctx;                  // internal parsing context data (set null)
@@ -357,10 +360,6 @@ extern "C" {
     fltu8 billb;                  
 #endif
   }flt_face;
-
-#ifdef FLT_UNIQUE_FACES
-#define FLT_FACESIZE_HASH (sizeof(flt_face)-sizeof(flt_array*)-sizeof(flt_face*)-sizeof(fltu32))
-#endif
 
   typedef struct flt_node_extref
   {
@@ -487,6 +486,17 @@ extern "C" {
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef FLT_IMPLEMENTATION
+#if defined(__x86_64__)    || \
+  defined(_M_X64)        || \
+  defined(__aarch64__)   || \
+  defined(__64BIT__)     || \
+  defined(__mips64)      || \
+  defined(__powerpc64__) || \
+  defined(__ppc64__)
+#	define FLT_PLATFORM_64
+#else
+#	define FLT_PLATFORM_32
+#endif //
 
 #if defined(_DEBUG) || defined(DEBUG)
 #ifdef _MSC_VER
@@ -539,6 +549,7 @@ extern "C" {
 #define FLT_NULL (0)
 #define FLT_TRUE (1)
 #define FLT_FALSE (0)
+#define flt_strdup(s) flt_strdup_internal(s)
 #define fltopt 
 #define FLTMAKE16(hi8,lo8)    ( ((fltu16)(hi8)<<8)   | (fltu16)(lo8) )
 #define FLTMAKE32(hi16,lo16)  ( ((fltu32)(hi16)<<16) | (fltu32)(lo16) )
@@ -579,7 +590,11 @@ extern "C" {
 //#define FLT_DICTFACES_SIZE 12289
 //#define FLT_DICTFACES_SIZE 24593
 #endif
-#define flt_strdup(s) flt_strdup_internal(s)
+
+#ifndef FLT_INDICES_SIZE
+#define FLT_INDICES_SIZE 4096       // this is the default initial capacity of the indices array for *every* flt
+#endif                              // only used with FLT_UNIQUE_FACES and when flt_opts.indices_size=0
+
 
 #if defined(WIN32) || defined(_WIN32) || (defined(sgi) && defined(unix) && defined(_MIPSEL)) || (defined(sun) && defined(unix) && !defined(_BIG_ENDIAN)) || (defined(__BYTE_ORDER) && (__BYTE_ORDER == __LITTLE_ENDIAN)) || (defined(__APPLE__) && defined(__LITTLE_ENDIAN__)) || (defined( _PowerMAXOS ) && (BYTE_ORDER == LITTLE_ENDIAN ))
 #define FLT_LITTLE_ENDIAN
@@ -714,9 +729,19 @@ void flt_dict_visit(flt_dict*dict, flt_dict_visitor visitor);
 ////////////////////////////////////////////////
 // Stack
 ////////////////////////////////////////////////
+#ifdef FLT_PLATFORM_64
+typedef struct flt_stack_entry
+{
+  flt_node* node;
+  fltu32 val32;
+}flt_stack_entry;
+typedef flt_stack_entry flt_stack_type;
+#else
+typedef fltu64 flt_stack_type;
+#endif
 typedef struct flt_stack 
 {
-  fltu64* entries; // fixed size array (enough with a good upper bound estimation)
+  flt_stack_type* entries; // fixed size array (enough with a good upper bound estimation)
   int count;
   int capacity;
 }flt_stack;
@@ -727,6 +752,7 @@ void flt_stack_push32(flt_stack* s, fltu32 val);
 void flt_stack_pushn(flt_stack* s, flt_node* value);
 flt_node* flt_stack_topn(flt_stack* s);
 flt_node* flt_stack_topn_not_null(flt_stack* s);
+fltu32 flt_stack_top32_not_null(flt_stack* s);
 flt_node* flt_stack_popn(flt_stack* s);
 
 ////////////////////////////////////////////////
@@ -751,7 +777,7 @@ flt_array_type flt_array_pop_back(flt_array* arr);
 flt_array_type flt_array_at(flt_array* arr, fltu32 index);
 void flt_array_clear(flt_array* arr);
 void flt_array_grow_double(flt_array* arr);
-void flt_array_ensure(flt_array* arr, fltu32 cap);
+void flt_array_ensure(flt_array* arr, fltu32 count_new_elements); // makes sure there's room for new elements
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -856,6 +882,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   flt_stack_create(&ctx->stack,ctx->opts->stacksize); // creates nodes stack
 #ifdef FLT_UNIQUE_FACES
   flt_dict_create(opts->dfaces_size ? opts->dfaces_size: FLT_DICTFACES_SIZE,0,&ctx->dictfaces,flt_dict_hash_face_djb2, flt_dict_keycomp_face);
+  flt_array_create(&of->indices, opts->indices_size ? opts->indices_size : FLT_INDICES_SIZE, flt_array_grow_double);
 #endif
   // opening file
   ctx->f = flt_fopen(filename, of);
@@ -1477,9 +1504,9 @@ FLT_RECORD_READER(flt_reader_face)
 #ifdef FLT_UNIQUE_FACES
   // if we compiled for face palettes, let's do the hash thing 
   // we store the face hash in every face node
-  facehash=flt_dict_hash_face_djb2((const unsigned char*)face,FLT_FACESIZE_HASH);
+  facehash=flt_dict_hash_face_djb2((const unsigned char*)face, sizeof(flt_face));
   // any face with same hash exists?
-  face=(flt_face*)flt_dict_geth(ctx->dictfaces, (const char*) face, FLT_FACESIZE_HASH, facehash, &hashentry);
+  face=(flt_face*)flt_dict_geth(ctx->dictfaces, (const char*) face, sizeof(flt_face), facehash, &hashentry);
   if ( !face )
   {
     flt_atomic_inc(&TOTALUNIQUEFACES);
@@ -1487,17 +1514,11 @@ FLT_RECORD_READER(flt_reader_face)
     face = (flt_face*)flt_malloc(sizeof(flt_face));
     flt_mem_check(face,of->errcode);
     *face = tmpf;
-    flt_dict_insert(ctx->dictfaces, (const char*)face, face, FLT_FACESIZE_HASH, facehash, &hashentry);
+    flt_dict_insert(ctx->dictfaces, (const char*)face, face, sizeof(flt_face), facehash, &hashentry);
   }
-
-  // #error VAMOS A USAR LA PILA PARA GUARDAR EL HASHENTRY de 32 bits. 
-  //   LUEGO EN VERTEX LIST LO COGEMOS, MONTAMOS EL 64 BIT CON LOS INDICES LEIDOS Y ESTE HASHENTRY Y
-  //   ENTONCES GUARDAMOS ESOS INDICES 64 BITS EN EL ARRAY DE INDICES GLOBAL (por flt) Y DEJAMOS EN EL 
-  //   NODO PADRE (GRUPO/LOD...) EL INDICE START + INDICE COUNT
 
   flt_stack_popn(ctx->stack);
   flt_stack_push32(ctx->stack, hashentry);
-
 #else
   // creating node for every face
   nodeface = (flt_node_face*)flt_node_create(of, FLT_NODE_FACE,ctx->tmpbuff);
@@ -1522,10 +1543,35 @@ FLT_RECORD_READER(flt_reader_vertex_list)
   fltu32 n_inds=(oh->length-4)/4;
   fltu32 i;
 
-  flt_atomic_add(&TOTALINDICES, n_inds);
 #ifdef FLT_UNIQUE_FACES
-  flt_face* face=0;
-  face=face;
+  const fltu32 max_ninds_read = sizeof(ctx->tmpbuff)/4; // max no of indices can be read at once
+  fltu32* inds=(fltu32*)ctx->tmpbuff; // indices array
+  fltu32 leftinds=n_inds; // no of indices left to read
+  fltu32 readb; // last read bytes
+  
+  // we get the top not null, which is my hash entry value for the unique face in the dict
+  fltu32 hashe = flt_stack_top32_not_null(ctx->stack);
+  if ( hashe != 0xffffffff )
+  {
+    // make sure destination has enough memory
+    flt_array_ensure(of->indices, n_inds); 
+
+    FLT_ASSERT(max_ninds_read>=n_inds);
+    // this nasty loop is to avoid a secondary buffer allocation, and reuse the context->tmpbuff
+    while (leftinds>0)
+    {
+      readb = (int)fread(ctx->tmpbuff, 1, flt_min(max_ninds_read,leftbytes),ctx->f);
+      leftbytes -= readb;
+      leftinds -= readb >> 2;
+
+      // we got this batch of indices, let's encode it
+      for (i=0;i<readb>>2;++i)
+      {
+        flt_swap32(inds+i);
+        flt_array_push_back(of->indices, FLTMAKE64(hashe,inds[i]));
+      }
+    }
+  }
   // in UNIQUE mode, we don't store a node for the vertex list.
   // instead we add the indices to the unique face's indices array
 #else
@@ -1542,6 +1588,7 @@ FLT_RECORD_READER(flt_reader_vertex_list)
   }
 #endif
 
+  flt_atomic_add(&TOTALINDICES, n_inds);
   return leftbytes;
 }
 #pragma warning(default:4101 4189)
@@ -1556,6 +1603,9 @@ void flt_release(flt* of)
   // header
   flt_safefree(of->filename);
   flt_safefree(of->header);
+#ifdef FLT_UNIQUE_FACES
+  flt_array_destroy(&of->indices);
+#endif
 
   // palette list
   if ( of->pal )
@@ -2168,7 +2218,7 @@ int flt_path_endsok(const char* filename)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 char* flt_strdup_internal(const char* str)
 {
-  const int len=strlen(str);
+  const int len=(int)strlen(str);
   char* outstr=(char*)flt_malloc(len+1);
   memcpy(outstr, str, len+1);
   return outstr;
@@ -2472,7 +2522,7 @@ int flt_stack_create(flt_stack** s, int capacity)
   if (!capacity) 
     capacity = FLT_STACKARRAY_SIZE;
 
-  _s->entries = (fltu64*)flt_malloc(sizeof(fltu64)*capacity);
+  _s->entries = (flt_stack_type*)flt_malloc(sizeof(flt_stack_type)*capacity);
   if (!_s->entries) return  FLT_FALSE;
   _s->capacity = capacity;
 
@@ -2483,43 +2533,50 @@ int flt_stack_create(flt_stack** s, int capacity)
 void flt_stack_destroy(flt_stack** s)
 {
   if ( !s || !*s ) return;
-#ifdef _DEBUG
-  if ( (*s)->count )
-    printf( "Stack destroyed with %d elements\n", (*s)->count);
-#endif
+
   flt_safefree((*s)->entries);
   flt_safefree((*s));
 }
 
 void flt_stack_push32(flt_stack* s, fltu32 val)
 {
-#ifdef _DEBUG
-  if (s->count >= s->capacity )
-  {
-    FLT_BREAK;// "stack ran out of memory, increase FLT_STACK_SIZE"
-    return;
-  }
+#ifdef FLT_PLATFORM_64  
+  flt_stack_type* se;
 #endif
+  FLT_ASSERT(s->count < s->capacity && "stack ran out of memory, increase FLT_STACK_SIZE");
 
+#ifdef FLT_PLATFORM_64
+  se = s->entries+(s->count++);
+  se->val32 = val;
+  se->node = FLT_NULL;
+#else
   s->entries[s->count++]=FLTMAKE64(FLT_NODE_NONE,val);
+#endif
 }
 
-void flt_stack_pushn(flt_stack* s, flt_node* value)
+void flt_stack_pushn(flt_stack* s, flt_node* node)
 {
-#ifdef _DEBUG
-  if (s->count >= s->capacity )
-  {
-    FLT_BREAK;// "stack ran out of memory, increase FLT_STACK_SIZE"
-    return;
-  }
+#ifdef FLT_PLATFORM_64  
+  flt_stack_type* se;
 #endif
+  FLT_ASSERT(s->count < s->capacity && "stack ran out of memory, increase FLT_STACK_SIZE");
 
-  s->entries[s->count++]=value ? FLTMAKE64(value->type,value) : 0;
+#ifdef FLT_PLATFORM_64  
+  se = s->entries+(s->count++);
+  se->val32=0; 
+  se->node=node;
+#else
+  s->entries[s->count++]=node ? FLTMAKE64(node->type,node) : 0;
+#endif
 }
 
 flt_node* flt_stack_topn(flt_stack* s)
 {
   flt_node* ret=FLT_NULL;
+#ifdef FLT_PLATFORM_64
+  if (s->count)
+    ret = s->entries[s->count-1].node;
+#else
   fltu32 type,val;
   if (s->count)
   {
@@ -2527,31 +2584,72 @@ flt_node* flt_stack_topn(flt_stack* s)
     if (type)
       ret=(flt_node*)val;
   }
-
+#endif
   return ret;
 }
 
+fltu32 flt_stack_top32_not_null(flt_stack* s)
+{
+  int i=s->count-1;
+#ifdef FLT_PLATFORM_64
+  while(i>=0)
+  {
+    if ( s->entries[i].val32 && !s->entries[i].node )
+      return s->entries[i].val32;
+    --i;
+  }
+#else
+  fltu32 type,val;
+
+  while (i>=0)
+  {
+    if ( s->entries[i] )
+    {
+      FLTGET32(s->entries[i],type,val);
+      if (type==FLT_NODE_NONE)
+        return val;
+    }
+    --i;
+  }
+#endif
+  return 0xffffffff;
+}
+
+
 flt_node* flt_stack_topn_not_null(flt_stack* s)
 {
-  fltu32 type,val;
   int i=s->count-1;
+#ifdef FLT_PLATFORM_64
+  while(i>=0)
+  {
+    if ( s->entries[i].node )
+      return s->entries[i].node;
+    --i;
+  }
+#else
+  fltu32 type,val;
   
   while (i>=0)
   {
     if ( s->entries[i] )
     {
       FLTGET32(s->entries[i],type,val);
-      if (type)
+      if (type!=FLT_NODE_NONE)
         return (flt_node*)val;
     }
     --i;
   }
+#endif
   return FLT_NULL;
 }
 
 flt_node* flt_stack_popn(flt_stack* s)
 {
   flt_node* v=FLT_NULL;
+#ifdef FLT_PLATFORM_64
+  if (s->count)
+    v=s->entries[--s->count].node;
+#else
   fltu32 type,val;
   if (s->count)
   {
@@ -2560,6 +2658,7 @@ flt_node* flt_stack_popn(flt_stack* s)
     if (type)
       v = (flt_node*)val;
   }
+#endif
   return v;
 }
 
@@ -2619,10 +2718,11 @@ void flt_array_clear(flt_array* arr)
   arr->size=0;
 }
 
-void flt_array_ensure(flt_array* arr, fltu32 cap)
+void flt_array_ensure(flt_array* arr, fltu32 cout_new_elements)
 {
-  if ( cap <= arr->capacity ) return;
-  arr->capacity = cap;
+  const fltu32 newcap = arr->size+cout_new_elements;
+  if ( newcap <= arr->capacity ) return;
+  arr->capacity = newcap;
   flt_array_grow_double(arr); // ensure makes use directly of grow_double policy
 }
 #endif
@@ -2640,7 +2740,7 @@ return opcode==3 || (opcode>=6 && opcode<=9) || (opcode>=12 && opcode<=13)
 #endif
 
 #ifdef _MSC_VER
-#pragma warning(default:4244 4100 4996 4706 4091)
+#pragma warning(default:4244 4100 4996 4706 4091 4310)
 #endif
 
 #endif

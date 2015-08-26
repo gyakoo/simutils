@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #define FLT_NO_OPNAMES
 //#define FLT_LEAN_FACES
-//#define FLT_UNIQUE_FACES
+#define FLT_UNIQUE_FACES
 #define FLT_IMPLEMENTATION
 #include <flt.h>
 #include <cstdint>
