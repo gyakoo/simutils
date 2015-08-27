@@ -1,19 +1,31 @@
 -- WORK IN PROGRESS NOT USE --
 local action = _ACTION or ""
 
-solution "fltview"
+solution "fltview_gl"
 	location ( "build" )
 	configurations { "Debug", "Release" }
 	platforms {"x64", "x32"}
   
-  	project "fltview"
+  	project "fltview_gl"
 		kind "ConsoleApp"
 		language "C++"
-		files { "**.cc", "**.h", "**.cpp", "../../src/flt.h", "../../src/vis.h", "../../extern/GLFW/**.h" }
-		includedirs { "./", "../../src/", "../../extern/vld/include/", "../../extern/GLFW/"}
+		files { "**.cc", "**.h", "**.cpp", "../../src/flt.h", "../../src/vis.h", "../../extern/GLFW/**.h",
+        "../../extern/imgui/stb_truetype.h", 
+        "../../extern/imgui/stb_textedit.h",
+        "../../extern/imgui/stb_rect_pack.h",
+        "../../extern/imgui/imgui_internal.h",
+        "../../extern/imgui/imgui_impl_glfw.h",
+        "../../extern/imgui/imgui.h",
+        "../../extern/imgui/imconfig.h",
+        "../../extern/imgui/imgui_impl_glfw.cpp",
+        "../../extern/imgui/imgui_draw.cpp",
+        "../../extern/imgui/imgui_demo.cpp",
+        "../../extern/imgui/imgui.cpp" }
+		includedirs { "./", "../../src/", "../../extern/vld/include/", "../../extern/GLFW/", "../../extern/imgui/"}
 	 		
-		configuration { "windows" }            
-			 links { "gdi32", "winmm", "user32", "glfw3", "opengl32" }
+		configuration { "windows" }   
+            defines { "VIS_GL" }
+			links { "gdi32", "winmm", "user32", "glfw3", "opengl32" }
 		
 	    configuration { "Debug", "x32" }
             defines { "DEBUG", "_DEBUG" }

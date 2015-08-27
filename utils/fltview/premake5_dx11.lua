@@ -1,19 +1,31 @@
 -- WORK IN PROGRESS NOT USE --
 local action = _ACTION or ""
 
-solution "fltview"
+solution "fltview_dx11"
 	location ( "build" )
 	configurations { "Debug", "Release" }
 	platforms {"x64", "x32"}
   
-  	project "fltview"
+  	project "fltview_dx11"
 		kind "ConsoleApp"
 		language "C++"
-		files { "**.cc", "**.h", "**.cpp", "../../src/flt.h", "../../src/vis.h" }
-		includedirs { "./", "../../src/", "../../extern/vld/include/", "$(DXSDK_DIR)/Include" }		
+		files { "**.cc", "**.h", "**.cpp", "../../src/flt.h", "../../src/vis.h",
+        "../../extern/imgui/stb_truetype.h", 
+        "../../extern/imgui/stb_textedit.h",
+        "../../extern/imgui/stb_rect_pack.h",
+        "../../extern/imgui/imgui_internal.h",
+        "../../extern/imgui/imgui_impl_dx11.h",
+        "../../extern/imgui/imgui.h",
+        "../../extern/imgui/imconfig.h",
+        "../../extern/imgui/imgui_impl_dx11.cpp",
+        "../../extern/imgui/imgui_draw.cpp",
+        "../../extern/imgui/imgui_demo.cpp",
+        "../../extern/imgui/imgui.cpp" }
+		includedirs { "./", "../../src/", "../../extern/vld/include/", "$(DXSDK_DIR)/Include", "../../extern/imgui/" }		
 	 		
-		configuration { "windows" }            
-			 links { "gdi32", "winmm", "user32" }
+		configuration { "windows" }
+            defines { "VIS_DX11"}
+			links { "gdi32", "winmm", "user32", "d3d11", "d3dcompiler", "d3dx11", "d3d9", "dxerr", "dxguid.lib" }
 		
 	    configuration { "Debug", "x32" }
             defines { "DEBUG", "_DEBUG" }

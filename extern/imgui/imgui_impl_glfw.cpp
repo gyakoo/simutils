@@ -5,12 +5,12 @@
 #include "imgui_impl_glfw.h"
 
 // GLFW
-#include <GLFW/glfw3.h>
+#include <glfw3.h>
 #ifdef _WIN32
 #undef APIENTRY
 #define GLFW_EXPOSE_NATIVE_WIN32
 #define GLFW_EXPOSE_NATIVE_WGL
-#include <GLFW/glfw3native.h>
+#include <glfw3native.h>
 #endif
 
 // Data

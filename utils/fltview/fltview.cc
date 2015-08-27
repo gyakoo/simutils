@@ -1,4 +1,6 @@
 
+#pragma warning(disable:4100 4005)
+
 #if defined(_DEBUG) && !defined(_WIN64)
 #include <vld.h>
 #endif
@@ -12,7 +14,6 @@
 #define FLT_IMPLEMENTATION
 #include <flt.h>
 
-#define VIS_GL
 #define VIS_IMPLEMENTATION
 #include <vis.h>
 #include <cstdint>
@@ -28,7 +29,6 @@
 #include <thread>
 #include <vector>
 
-#pragma warning(disable:4100)
 struct fltThreadPool;
 struct fltThreadPoolContext;
 struct fltThreadTask;
@@ -36,40 +36,20 @@ struct fltThreadTask;
 // types
 struct fltThreadTask
 {
-  enum f2dTaskType { TASK_UNKNOWN=-1, TASK_FLT=0, TASK_IMG=1 };
+  enum f2dTaskType { TASK_NONE=-1, TASK_FLT=0};
   f2dTaskType type;
 
   std::string filename;
   flt* of;
   flt_opts* opts;
 
-  fltThreadTask():type(TASK_UNKNOWN), of(NULL), opts(NULL){}
+  fltThreadTask():type(TASK_NONE), of(NULL), opts(NULL){}
   fltThreadTask(f2dTaskType tt, const std::string& f, flt* of, flt_opts* opts)
     :type(tt), filename(f), of(of), opts(opts){}
-  fltThreadTask(const fltThreadTask& t)
-  {
-    *this = t;
-  }
-  void operator=(const fltThreadTask& t)
-  {
-    type=t.type;
-    filename = t.filename;
-    of = t.of;
-    opts = t.opts;
-  }
   
   void runTask(fltThreadPool* tp);
 };
 
-
-struct fltThreadPoolContext
-{
-  fltThreadPoolContext() : numThreads(0), verbose(false)
-  {
-  }
-  int numThreads;
-  bool verbose;  
-};
 
 struct fltThreadPool
 {
@@ -80,15 +60,14 @@ struct fltThreadPool
   void deinit();
   bool isWorking(){ return !tasks.empty() || workingTasks>0; }
 
-  fltThreadPoolContext ctx;
   std::vector<std::string> searchpaths;
   std::vector<std::thread*> threads;
   std::deque<fltThreadTask> tasks;
-  std::set<std::string> addedFiles;
   std::mutex mtxTasks;
   std::mutex mtxFiles;
   std::atomic_int workingTasks;
   std::atomic_int nfiles;
+  int numThreads;
   bool finish;
 };
 
@@ -101,10 +80,10 @@ void fltThreadPool::init()
 {
   deinit();
   finish=false;
-  threads.reserve(ctx.numThreads);
+  threads.reserve(numThreads);
   workingTasks=0;
   nfiles=0;
-  for(int i = 0; i < ctx.numThreads; ++i)
+  for(int i = 0; i < numThreads; ++i)
     threads.push_back(new std::thread(&fltThreadPool::runcode,this));
 }
 
@@ -141,18 +120,6 @@ bool fltThreadPool::getNextTask(fltThreadTask* t)
 
 void fltThreadPool::addNewTask(const fltThreadTask& task)
 {
-  // img not supported, don't create task
-  if ( task.type==fltThreadTask::TASK_IMG && !fltExtensionIsImg(task.filename.c_str()) )
-    return;
-
-  // check if file is done already
-  {
-    std::lock_guard<std::mutex> lock(mtxFiles);
-    if ( addedFiles.find(task.filename)!=addedFiles.end() )
-      return;
-    addedFiles.insert(task.filename);
-  }
-
   // not done yet, process
   std::lock_guard<std::mutex> lock(mtxTasks);
   tasks.push_front( task );
@@ -172,10 +139,10 @@ void fltThreadPool::deinit()
 
 void fltThreadTask::runTask(fltThreadPool* tp)
 {
+  tp=tp;
   switch( type )
   {
   case TASK_FLT: flt_load_from_filename(filename.c_str(), of, opts); break;
-  case TASK_IMG: break;
   }
 }
 
@@ -306,7 +273,7 @@ void read_with_callbacks_mt(const char* filename)
   flt* of=(flt*)flt_calloc(1,sizeof(flt));
 
   fltThreadPool tp;
-  tp.ctx.numThreads = std::thread::hardware_concurrency();
+  tp.numThreads = std::thread::hardware_concurrency();
   tp.init();
 
   fltu16 vtxstream[]={
@@ -402,6 +369,8 @@ void print_hie(const char* filename)
 
 int main(int argc, const char** argv)
 {
+  argc=argc;
+  argv=argv;
   //print_hie("../../../data/camp/master.flt");
   read_with_callbacks_mt("../../../data/camp/master.flt");
   //read_with_callbacks_mt("../../../data/titanic/titanic.flt");
