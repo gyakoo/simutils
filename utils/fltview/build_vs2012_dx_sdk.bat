@@ -10,7 +10,7 @@ if %ERRORLEVEL% NEQ 0 (
   echo Download it from: https://premake.github.io/
   goto end
 )
-premake5 vs2012
+premake5 --file=premake5_dx_sdk.lua vs2012 
 
 
 :end

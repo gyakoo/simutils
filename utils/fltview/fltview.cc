@@ -11,6 +11,10 @@
 #define FLT_UNIQUE_FACES
 #define FLT_IMPLEMENTATION
 #include <flt.h>
+
+#define VIS_GL
+#define VIS_IMPLEMENTATION
+#include <vis.h>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -342,6 +346,24 @@ void read_with_callbacks_mt(const char* filename)
   printf("nfaces total : %d\n", TOTALNFACES);
   printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
   printf("nindices total: %d\n", TOTALINDICES);
+
+  {
+    vis* v;
+    vis_opts opts;
+    opts.width = 1024;
+    opts.height= 768;
+    opts.title="fltview";
+    if ( vis_init(&v,&opts) == VIS_OK )
+    {
+      while( vis_begin_frame(v) == VIS_OK )
+      {
+        vis_frame(v);
+        vis_end_frame(v);
+      }
+      vis_release(&v);
+    }
+  }
+
   MessageBoxA(NULL,tmp,"continue",MB_OK);
   flt_release(of);
   flt_safefree(of);
