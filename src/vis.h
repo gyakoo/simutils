@@ -87,9 +87,27 @@ SOFTWARE.
 #define VIS_FAIL (-1)
 #define VIS_ERR_INIT (1)
 
+#ifndef viscalar
+#define viscalar float
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+  typedef unsigned char  visu8;
+  typedef unsigned short visu16;
+  typedef unsigned int   visu32;
+  typedef unsigned long long visu64;
+  typedef char  visi8;
+  typedef short visi16;
+  typedef int   visi32;
+  typedef long long visi64;
+  typedef viscalar vis3[3];
+  typedef viscalar vis4[4];
+  typedef viscalar vis3x3[9];
+  typedef viscalar vis4x4[16];
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                  DIRECTX 11 (HEADER)
@@ -114,7 +132,7 @@ extern "C" {
     GLFWwindow* window;
     const GLFWvidmode* mode;
   }vis;
-
+  
 
 #endif // VIS_DX11 else VIS_GL
 
@@ -128,9 +146,16 @@ extern "C" {
     char* title;
   }vis_opts;
 
+  typedef struct vis_camera 
+  {
+    vis4x4  proj;
+    vis3x3  view;
+    vis3    pos;
+  }vis_camera;
+
   int vis_init(vis** vi, vis_opts* opts);
   int vis_begin_frame(vis* vi);
-  void vis_frame(vis* vi);
+  void vis_render_frame(vis* vi);
   int vis_end_frame(vis* vi);
   void vis_release(vis** vi);
 
@@ -151,7 +176,7 @@ extern "C" {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #if defined(VIS_DX11)
 
-int vis_init_platform(vis* vi, vis_opts* opts)
+int vis_init_plat(vis* vi, vis_opts* opts)
 {
   vis_unused(vi);
   vis_unused(opts);
@@ -159,13 +184,13 @@ int vis_init_platform(vis* vi, vis_opts* opts)
   return VIS_FAIL;
 }
 
-void vis_release_platform(vis* vi)
+void vis_release_plat(vis* vi)
 {
   vis_unused(vi);
 }
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
-int vis_begin_frame_platform(vis* vi)
+int vis_begin_frame_plat(vis* vi)
 {
   vis_unused(vi);
   return VIS_OK;
@@ -173,14 +198,14 @@ int vis_begin_frame_platform(vis* vi)
 
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
-void vis_frame_platform(vis* vi)
+void vis_render_frame_plat(vis* vi)
 {
   vis_unused(vi);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
-int vis_end_frame_platform(vis* vi)
+int vis_end_frame_plat(vis* vi)
 {
   vis_unused(vi);
   return VIS_OK;
@@ -192,11 +217,11 @@ int vis_end_frame_platform(vis* vi)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #elif defined(VIS_GL)
-void vis_gl_frame(GLFWwindow* window, int w, int h);
+void vis_gl_render_frame(GLFWwindow* window, int w, int h);
 
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
-int vis_init_platform(vis* vi, vis_opts* opts)
+int vis_init_plat(vis* vi, vis_opts* opts)
 {
   GLint i=1;
 
@@ -210,7 +235,7 @@ int vis_init_platform(vis* vi, vis_opts* opts)
     glfwTerminate();
     return VIS_ERR_INIT;
   }
-  glfwSetFramebufferSizeCallback(vi->window, vis_gl_frame);
+  glfwSetFramebufferSizeCallback(vi->window, vis_gl_render_frame);
   glfwMakeContextCurrent(vi->window);
   glfwSwapInterval(1);
 
@@ -235,7 +260,7 @@ int vis_init_platform(vis* vi, vis_opts* opts)
 
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
-void vis_release_platform(vis* vi)
+void vis_release_plat(vis* vi)
 {
   glfwDestroyWindow(vi->window);
   glfwTerminate();
@@ -243,7 +268,7 @@ void vis_release_platform(vis* vi)
 
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
-void vis_gl_frame(GLFWwindow* window, int w, int h)
+void vis_gl_render_frame(GLFWwindow* window, int w, int h)
 {
   int width = 0, height = 0;
 
@@ -269,7 +294,7 @@ void vis_gl_frame(GLFWwindow* window, int w, int h)
 
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
-int vis_begin_frame_platform(vis* vi)
+int vis_begin_frame_plat(vis* vi)
 {
   if ( glfwWindowShouldClose(vi->window) )
     return VIS_FAIL;
@@ -279,14 +304,14 @@ int vis_begin_frame_platform(vis* vi)
 
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
-void vis_frame_platform(vis* vi)
+void vis_render_frame_plat(vis* vi)
 {
-  vis_gl_frame(vi->window,0,0);
+  vis_gl_render_frame(vi->window,0,0);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
-int vis_end_frame_platform(vis* vi)
+int vis_end_frame_plat(vis* vi)
 {
   glfwSwapBuffers(vi->window);
   glfwPollEvents();
@@ -302,28 +327,28 @@ int vis_init(vis** vi, vis_opts* opts)
 {
   *vi = (vis*)vis_malloc(sizeof(vis));
   vis_mem_check(*vi);
-  return vis_init_platform(*vi,opts);
+  return vis_init_plat(*vi,opts);
 }
 
 void vis_release(vis** vi)
 {
-  vis_release_platform(*vi);
+  vis_release_plat(*vi);
   vis_safefree(*vi);
 }
 
 int vis_begin_frame(vis* vi)
 {
-  return vis_begin_frame_platform(vi);
+  return vis_begin_frame_plat(vi);
 }
 
-void vis_frame(vis* vi)
+void vis_render_frame(vis* vi)
 {
-  return vis_frame_platform(vi);
+  return vis_render_frame_plat(vi);
 }
 
 int vis_end_frame(vis* vi)
 {
-  return vis_end_frame_platform(vi);
+  return vis_end_frame_plat(vi);
 }
 
 #endif // VIS_IMPLEMENTATION

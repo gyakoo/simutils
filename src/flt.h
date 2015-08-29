@@ -52,6 +52,7 @@ DOCUMENTATION
 - Define FLT_ALIGNED to use aligned version of malloc/free (when not implementing custom flt_malloc/...)
 - Define FLT_INDICES_SIZE for a default initial capacity of the global indices array (when using FLT_UNIQUE_FACES only)
           and flt_opts.indices_size=0.
+- Define FLT_TEXTURE_ATTRIBS_IN_NODE to keep width/height/depth attributes in each flt_text_pal node
 
 (Additional info)
 - Calls to load functions are thread safe
@@ -145,9 +146,10 @@ DOCUMENTATION
 #define FLT_OPT_HIE_HEADER          (1<<20) // read header
 #define FLT_OPT_HIE_NO_NAMES        (1<<21) // don't store names
 #define FLT_OPT_HIE_EXTREF_RESOLVE  (1<<22) // unless this bit is set, ext refs aren't resolved
-#define FLT_OPT_HIE_RESERVED        (1<<23) // not used
+#define FLT_OPT_HIE_RESERVED1        (1<<23) // not used
 #define FLT_OPT_HIE_COMMENTS        (1<<24) // include comments 
-#define FLT_OPT_HIE_ALL           (0x7ffff) // from bit 0 to 18
+#define FLT_OPT_HIE_RESERVED2       (1<<25)
+#define FLT_OPT_HIE_ALL_NODES           (0x7ffff) // from bit 0 to 18
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -187,6 +189,7 @@ DOCUMENTATION
 #define FLT_OP_VERTEX_LIST 72
 #define FLT_OP_LOD 73
 #define FLT_OP_MESH 84
+#define FLT_OP_SWITCH 96
 #define FLT_OP_MAX 154
 
 //////////////////////////////////////////////////////////////////////////
@@ -200,7 +203,8 @@ DOCUMENTATION
 #define FLT_NODE_LOD    6 //FLT_OP_LOD
 #define FLT_NODE_FACE   7 //FLT_OP_FACE
 #define FLT_NODE_VLIST  8 //FLT_OP_VERTEX_LIST
-#define FLT_NODE_MAX    9
+#define FLT_NODE_SWITCH 9 // FLT_OP_SWITCH
+#define FLT_NODE_MAX    10
 
 #ifdef __cplusplus
 extern "C" {
@@ -225,6 +229,7 @@ extern "C" {
   typedef struct flt_node_extref;
   typedef struct flt_node_object;
   typedef struct flt_node_lod;
+  typedef struct flt_node_switch;
   typedef struct flt_node_face;
   typedef struct flt_face;
   typedef struct flt_array;
@@ -266,6 +271,7 @@ extern "C" {
     const char** search_paths;                // optional custom array of search paths ordered. last element should be null.
     flt_callback_extref   cb_extref;          // optional callback when an external ref is found
     flt_callback_texture  cb_texture;         // optional callback when a texture entry is found
+    fltu32* countable;                        // optional to get back counters for opcodes
     void* cb_user_data;                       // optional data to pass to callbacks
   }flt_opts;
 
@@ -315,6 +321,11 @@ extern "C" {
     flti32 patt_ndx;
     flti32 xy_loc[2];  
     struct flt_pal_tex* next;
+#ifdef FLT_TEXTURE_ATTRIBS_IN_NODE
+    fltu16 width;
+    fltu16 height;
+    fltu16 depth;
+#endif
   }flt_pal_tex;
   
   typedef struct flt_node
@@ -414,6 +425,13 @@ extern "C" {
     double sig_size;
     flti32 flags;
   }flt_node_lod;
+
+  typedef struct flt_node_switch
+  {
+    struct flt_node base;
+    fltu32 cur_mask;
+    fltu32 mask_count;
+  }flt_node_switch;
 
 #ifndef FLT_UNIQUE_FACES
   typedef struct flt_node_face
@@ -803,7 +821,6 @@ void* flt_aligned_calloc(size_t nelem, size_t elsize, size_t alignment);
 int flt_err(int err, flt* of);
 int flt_read_ophead(fltu16 op, flt_op* data, FILE* f);
 void flt_swap_desc(void* data, flt_end_desc* desc);
-const char* flt_get_op_name(fltu16 opcode);
 fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr, float* normal, float* uv);
 void flt_vtx_write(flt* of, fltu16* stream, double* xyz, fltu32 abgr, float* uv, float* normal);
 void flt_node_add(flt* of, flt_node* node);
@@ -865,16 +882,14 @@ int flt_read_ophead(fltu16 op, flt_op* data, FILE* f)
 fltatom32 TOTALNFACES=0;
 fltatom32 TOTALUNIQUEFACES=0; 
 fltatom32 TOTALINDICES=0;
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-void print_i(int d){ while ((d--)>0) printf( "    "); }
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 {
   flt_op oh;
   flti32 skipbytes;  
-  flt_rec_reader readtab[FLT_OP_MAX]={0};
-  fltu32 countable[FLT_OP_MAX]={0};
+  flt_rec_reader readtab[FLT_OP_MAX]={0};  
   flt_context* ctx;
   char use_pal=0, use_node=0;  
 
@@ -904,7 +919,6 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   ctx->f = flt_fopen(filename, of);
   if ( !ctx->f ) return flt_err(FLT_ERR_FOPEN, of);
 
-  //printf( "%s\n", filename );
   // configuring reading
   readtab[FLT_OP_HEADER] = flt_reader_header;         // always read header
   readtab[FLT_OP_PAL_VERTEX] = flt_reader_pal_vertex; // always read vertex palette header for skipping at least
@@ -945,32 +959,9 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
     flt_stack_pushn(ctx->stack, of->hie->node_root);
   }
 
-  // ---------------------------- TEMP
-  if (opts->hieflags & FLT_OPT_HIE_RESERVED) { print_i(ctx->cur_depth); printf( "Begin Extref %s\n", of->filename ); }
-
   // Reading Loop!
   while ( flt_read_ophead(FLT_OP_DONTCARE, &oh, ctx->f) )
   {
-    // ---------------------------- TEMP
-    {
-      ++countable[oh.op];
-      if (opts->hieflags & FLT_OPT_HIE_RESERVED)
-      {
-        if ( oh.op == FLT_OP_PUSHLEVEL )
-        {
-          print_i(ctx->cur_depth);
-          ++ctx->cur_depth;
-        }
-        else if ( oh.op == FLT_OP_POPLEVEL ) 
-        {
-          --ctx->cur_depth;
-          print_i(ctx->cur_depth);
-        }
-        else print_i(ctx->cur_depth);
-        printf( "(%03d) %s\n", oh.op, flt_get_op_name(oh.op) );
-      }
-    } // ---------------------------- TEMP
-
     ++ctx->rec_count;
     // if reader function available, use it
     skipbytes = readtab[oh.op] ? readtab[oh.op](&oh, of) : oh.length-sizeof(flt_op);    
@@ -983,19 +974,6 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 
   if (opts->hieflags & FLT_OPT_HIE_EXTREF_RESOLVE && of->hie)
     flt_resolve_all_extref(of);  
-
-  // ---------------------------- TEMP
-  if (opts->hieflags & FLT_OPT_HIE_RESERVED) { print_i(ctx->cur_depth); printf( "End Extref %s\n", of->filename ); }
-
-  // TEMPORARY
-//   {
-//     printf( "%s\n", of->filename );
-//     for (oh.op=0;oh.op<FLT_OP_MAX;++oh.op)
-//     {
-//       if ( countable[oh.op] )
-//         printf( "(%02d) %s : %d\n", oh.op, flt_get_op_name(oh.op), countable[oh.op] );
-//     }
-//   }
 
   flt_stack_popn(ctx->stack); // root
   flt_stack_destroy(&ctx->stack); // no needed anymore (also released in flt_release)
@@ -1493,9 +1471,7 @@ FLT_RECORD_READER(flt_reader_face)
   flt_getswapi16(face->shader_ndx,74);
   flt_getswapi32(face->flags,40);
   face->billb = (fltu8)*(ctx->tmpbuff+21);
-#ifndef FLT_LEAN_FACES
-  if ( !(ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES) )
-    face->name = flt_strdup(ctx->tmpbuff);
+#ifndef FLT_LEAN_FACES  
   flt_getswapi32(face->ir_color,8);
   flt_getswapi32(face->ir_mat,32);
   flt_getswapi16(face->smc_id,28);
@@ -1530,10 +1506,12 @@ FLT_RECORD_READER(flt_reader_face)
     flt_atomic_inc(&TOTALUNIQUEFACES);
     // if it's unique, add it to dictionary of faces. 
     face = (flt_face*)flt_malloc(sizeof(flt_face));
-    flt_mem_check(face,of->errcode);
+    flt_mem_check(face,of->errcode);    
     *face = tmpf;
+    if ( !(ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES) && *ctx->tmpbuff )
+      face->name = flt_strdup(ctx->tmpbuff);
     flt_dict_insert(ctx->dictfaces, (const char*)face, face, FLT_FACESIZE_HASH, facehash, &hashentry);
-  }
+  }  
 
   flt_stack_popn(ctx->stack);
   flt_stack_push32(ctx->stack, hashentry);
@@ -1556,7 +1534,9 @@ FLT_RECORD_READER(flt_reader_face)
 FLT_RECORD_READER(flt_reader_vertex_list)
 {
   flt_context* ctx=of->ctx;
+#ifndef FLT_UNIQUE_FACES
   flt_node_vlist* vlistnode;
+#endif
   int leftbytes = oh->length-sizeof(flt_op);
   fltu32 n_inds=(oh->length-4)>>2;
   fltu32 i;
@@ -1861,7 +1841,7 @@ flt_node* flt_node_create(flt* of, int nodetype, const char* name)
     sizeof(flt_node_face);
 #endif
   static int nodesizes[FLT_NODE_MAX]={0,sizeof(flt_node), sizeof(flt_node_extref), sizeof(flt_node_group),
-    sizeof(flt_node_object), sizeof(flt_node_mesh), sizeof(flt_node_lod), nodefacesize, sizeof(flt_node_vlist)};
+    sizeof(flt_node_object), sizeof(flt_node_mesh), sizeof(flt_node_lod), nodefacesize, sizeof(flt_node_vlist), sizeof(flt_node_switch)};
   int size=nodesizes[nodetype];
 
   n=(flt_node*)flt_calloc(1,size);
@@ -2067,6 +2047,67 @@ const char* flt_get_op_name(fltu16 opcode)
   return (opcode<=FLT_OP_MAX) ? names[opcode] : "Unknown";
 #else
 return "";
+#endif
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+const char* flt_get_proj_name(fltu32 proj)
+{
+  static char tmp[16];
+#ifndef FLT_NO_OPNAMES
+  const char* names[]={"Flat Earth", "Trapezoidal", "Round Earth", "Lambert", "UTM", "Geodetic", "Geocentric"};
+  return proj<7?names[proj]:itoa(proj,tmp,10);
+#else
+  return itoa(proj,tmp,10);
+#endif
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+const char* flt_get_db_origin_name(fltu32 db_orig)
+{
+  static char tmp[16];
+#ifndef FLT_NO_OPNAMES
+  switch(db_orig)
+  {
+  case 100: return "OpenFlight";
+  case 200: return "DIG I/II";
+  case 300: return "Evans and Sutherland CT5A/CT6";
+  case 400: return "PSP DIG";
+  case 600: return "General Electric CIV/CV/PT2000";
+  case 700: return "Evans and Sutherland GDF";
+  default: return itoa(db_orig,tmp,10);
+  }
+#else
+  return itoa(proj,tmp,10);
+#endif
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+const char* flt_get_vcoords_units_name(fltu8 vcu)
+{
+  static char tmp[16];
+#ifndef FLT_NO_OPNAMES
+  const char* names[]={"Meters", "Kilometers", "", "", "Feet", "Inches", "", "", "Nautical miles"};
+  return vcu<9?names[vcu]:itoa(vcu,tmp,10);
+#else
+  return itoa(vcu,tmp,10);
+#endif
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+const char* flt_get_earth_ellip_name(int eem)
+{
+  static char tmp[16];
+#ifndef FLT_NO_OPNAMES
+  if ( eem==-1 ) return "User Defined";
+  const char* names[]={"WGS 1984", "WGS 1972", "Bessel", "Clarke 1866", "NAD1927"};
+  return eem>=0 && eem<5?names[eem]:itoa(eem,tmp,10);
+#else
+  return itoa(eem,tmp,10);
 #endif
 }
 

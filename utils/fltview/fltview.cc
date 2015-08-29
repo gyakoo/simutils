@@ -14,8 +14,10 @@
 #define FLT_IMPLEMENTATION
 #include <flt.h>
 
+#ifndef FLT_ONLY_PARSER
 #define VIS_IMPLEMENTATION
 #include <vis.h>
+#endif
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -303,17 +305,20 @@ void read_with_callbacks_mt(const char* filename)
   } while ( tp.isWorking() );
 
   // printing
-//   std::set<uint64_t> done;
-//   int counterctx=0;
-//   fltPrint(of,0,done, &counterctx);
+  std::set<uint64_t> done;
+  int counterctx=0;
+  fltPrint(of,0,done, &counterctx);
 
   char tmp[256]; sprintf_s(tmp, "Time: %.4g secs", (fltGetTime()-t0)/1000.0);
   printf( "\n%s\n",tmp);
   printf("nfiles total: %d\n", tp.nfiles);
   printf("nfaces total : %d\n", TOTALNFACES);
+#ifdef FLT_UNIQUE_FACES
   printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
+#endif
   printf("nindices total: %d\n", TOTALINDICES);
 
+#ifndef FLT_ONLY_PARSER
   {
     vis* v;
     vis_opts opts;
@@ -324,14 +329,13 @@ void read_with_callbacks_mt(const char* filename)
     {
       while( vis_begin_frame(v) == VIS_OK )
       {
-        vis_frame(v);
+        vis_render_frame(v);
         vis_end_frame(v);
       }
       vis_release(&v);
     }
   }
-
-  MessageBoxA(NULL,tmp,"continue",MB_OK);
+#endif
   flt_release(of);
   flt_safefree(of);
   flt_safefree(opts);
@@ -372,8 +376,8 @@ int main(int argc, const char** argv)
   argc=argc;
   argv=argv;
   //print_hie("../../../data/camp/master.flt");
-  read_with_callbacks_mt("../../../data/camp/master.flt");
-  //read_with_callbacks_mt("../../../data/titanic/titanic.flt");
+  //read_with_callbacks_mt("../../../data/camp/master.flt");
+  read_with_callbacks_mt("../../../data/utah/master.flt");
   //read_with_callbacks_mt("../../../data/Terrain_Standard/ds205-townbuildings_lowres/master_of_town.flt");
   return 0;
 }
