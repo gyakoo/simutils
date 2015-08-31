@@ -217,7 +217,7 @@ extern "C" {
   typedef short flti16;
   typedef int   flti32;
   typedef long long flti64;
-  typedef volatile long fltatom32;
+  typedef long fltatom32;
 
   typedef struct flt;
   typedef struct flt_opts;
@@ -271,7 +271,7 @@ extern "C" {
     const char** search_paths;                // optional custom array of search paths ordered. last element should be null.
     flt_callback_extref   cb_extref;          // optional callback when an external ref is found
     flt_callback_texture  cb_texture;         // optional callback when a texture entry is found
-    fltu32* countable;                        // optional to get back counters for opcodes
+    fltatom32* countable;                        // optional to get back counters for opcodes
     void* cb_user_data;                       // optional data to pass to callbacks
   }flt_opts;
 
@@ -723,7 +723,7 @@ void flt_atomic_add(fltatom32* c, fltu32 val);
 ////////////////////////////////////////////////
 typedef fltu32 (*flt_dict_hash)(const unsigned char*, int);
 typedef int (*flt_dict_keycomp)(const char*, const char*, int);
-typedef void (*flt_dict_visitor)(char* key, void* value);
+typedef void (*flt_dict_visitor)(char* key, void* value, void* userdata);
 typedef struct flt_dict_node
 {
   char* key;
@@ -750,12 +750,12 @@ int flt_dict_keycomp_string(const char* a, const char* b, int extra);
 int flt_dict_keycomp_face(const char* a, const char* b, int size);
 void flt_dict_create(int capacity, int create_cs, flt_dict** dict, flt_dict_hash hashf, flt_dict_keycomp kcomp);
 void flt_dict_destroy(flt_dict** dict, int free_elms, flt_dict_visitor destructor);
-void* flt_dict_gethe(flt_dict* dict, fltu32 hashe); // returns given entry+offset in hash
+void* flt_dict_gethe(flt_dict* dict, fltu32 hashe, fltu32* hashkey); // returns given entry+offset in hash
 void* flt_dict_geth(flt_dict* dict, const char* key, fltopt int size, fltu32 hash, fltu32* hashe); // returns given a hash
 void* flt_dict_get(flt_dict* dict, const char* key, fltopt int size);
 flt_dict_node* flt_dict_create_node(const char* key, fltu32 keyhash, void* value, int size);
 int flt_dict_insert(flt_dict* dict, const char* key, void* value, fltopt int size, fltopt fltu32 hash, fltopt fltu32* hashentry);
-void flt_dict_visit(flt_dict*dict, flt_dict_visitor visitor);
+void flt_dict_visit(flt_dict*dict, flt_dict_visitor visitor, void* userdata);
 
 ////////////////////////////////////////////////
 // Stack
@@ -833,7 +833,7 @@ flt_node* flt_node_create(flt* of, int nodetype, const char* name);
 void flt_release_node(flt_node* n);
 void flt_resolve_all_extref(flt* of);
 #ifdef FLT_UNIQUE_FACES
-void flt_face_destroy_name(char* key, void* faceptr);
+void flt_face_destroy_name(char* key, void* faceptr, void* userdata);
 #endif
 
 FLT_RECORD_READER(flt_reader_header);                 // FLT_OP_HEADER
@@ -966,6 +966,9 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
     // if reader function available, use it
     skipbytes = readtab[oh.op] ? readtab[oh.op](&oh, of) : oh.length-sizeof(flt_op);    
     ctx->op_last = oh.op;
+
+    if ( opts->countable )
+      flt_atomic_inc(opts->countable+oh.op);
 
     // if returned negative, it's an error, if positive, we skip until next record
     if ( skipbytes < 0 )        return flt_err(FLT_ERR_READBEYOND_REC,of);
@@ -1758,9 +1761,10 @@ void flt_release_node(flt_node* n)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef FLT_UNIQUE_FACES
-void flt_face_destroy_name(char* key, void* faceptr)
+void flt_face_destroy_name(char* key, void* faceptr, void* userdata)
 {
   key=key;//unused
+  userdata=userdata;
 #ifndef FLT_LEAN_FACES
   flt_face* f = (flt_face*)faceptr;
   flt_safefree(f->name);
@@ -2113,6 +2117,33 @@ const char* flt_get_earth_ellip_name(int eem)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
+const char* flt_get_face_drawtype(fltu16 drawtype)
+{
+  static char tmp[16];
+#ifndef FLT_NO_OPNAMES
+  const char* names[]={"Draw Solid Culling", "Draw Solid DSided", "Draw Wireframe Close", 
+    "Draw Wireframe", "Sorround WF AltColor","", "", "",  "Omni light", "Unidir light", "Bidir light"};
+  return drawtype<11?names[drawtype]:itoa(drawtype,tmp,10);
+#else
+  return itoa(drawtype,tmp,10);
+#endif
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+const char* flt_get_face_lightmode(fltu16 lm)
+{
+  static char tmp[16];
+#ifndef FLT_NO_OPNAMES
+  const char* names[]={"Flat", "Gouraud", "Lit", "Lit-Gouraud"};
+  return lm<4?names[lm]:itoa(lm,tmp,10);
+#else
+  return itoa(lm,tmp,10);
+#endif
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 const char* flt_get_err_reason(int errcode)
 {
 #ifdef FLT_LONG_ERR_MESSAGES
@@ -2400,7 +2431,7 @@ void flt_dict_create(int capacity, int create_cs, flt_dict** dict, flt_dict_hash
   *dict = d;
 }
 
-void flt_dict_visit(flt_dict*dict, flt_dict_visitor visitor)
+void flt_dict_visit(flt_dict*dict, flt_dict_visitor visitor, void* userdata)
 {
   int i;
   flt_dict_node *n;
@@ -2412,7 +2443,7 @@ void flt_dict_visit(flt_dict*dict, flt_dict_visitor visitor)
     n=dict->hasht[i];
     while (n)
     {
-      visitor(n->key, n->value);
+      visitor(n->key, n->value, userdata);
       n=n->next;
     }
   }
@@ -2434,7 +2465,7 @@ void flt_dict_destroy(flt_dict** dict, int free_elms, flt_dict_visitor destructo
     {
       nn=n->next;
       if ( destructor )
-        destructor(n->key, n->value);
+        destructor(n->key, n->value, FLT_NULL);
       if ( free_elms )
         flt_safefree(n->value);
       flt_free(n->key);
@@ -2452,16 +2483,17 @@ void flt_dict_destroy(flt_dict** dict, int free_elms, flt_dict_visitor destructo
 }
 
 // caller saves hash computation and possible comparison in flat list
-void* flt_dict_gethe(flt_dict* dict, const char* key, int size, fltu32 hashe)
+void* flt_dict_gethe(flt_dict* dict, fltu32 hashe, fltu32* hashkey)
 {
   flt_dict_node *n;
   fltu16 entry, entryoff;
   FLTGET16(hashe,entryoff,entry);
-  // if ( dict->cs ) flt_critsec_enter(dict->cs);
+  if ( dict->cs ) flt_critsec_enter(dict->cs);
   n = dict->hasht[entry];  
   while(entryoff--)
-    n=n->next;
-  // if ( dict->cs ) flt_critsec_leave(dict->cs);
+    n=n->next;  
+  if ( dict->cs ) flt_critsec_leave(dict->cs);
+  if(hashkey) *hashkey=n->keyhash;
   return n->value;
 }
 
@@ -2472,15 +2504,15 @@ void* flt_dict_geth(flt_dict* dict, const char* key, int size, fltu32 hash, fltu
   const int entry = hash % dict->capacity;
   fltu16 hoff=0;
 
-  //if ( dict->cs ) flt_critsec_enter(dict->cs);
+  if ( dict->cs ) flt_critsec_enter(dict->cs);
   n = dict->hasht[entry];  
   while(n)
   {
-    if ( n->keyhash == hash && dict->keycomp(n->key,key,size)==0 ){ break; }
+    if ( /*n->keyhash == hash &&*/ dict->keycomp(n->key,key,size)==0 ){ break; }
     ++hoff;
     n=n->next;
   }
-  //if ( dict->cs ) flt_critsec_leave(dict->cs);
+  if ( dict->cs ) flt_critsec_leave(dict->cs);
   *hashe = FLTMAKE32(hoff,(fltu16)entry);
   return n ? n->value : FLT_NULL;
 }

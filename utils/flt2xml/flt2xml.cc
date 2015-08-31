@@ -20,6 +20,7 @@
 #include <string>
 #include <map>
 #include <set>
+#include <functional>
 #include <mutex>
 #include <atomic>
 #include <deque>
@@ -56,7 +57,6 @@ struct fltThreadTask
   void runTask(fltThreadPool* tp);
 };
 
-
 struct fltThreadPool
 {
   void init();
@@ -84,7 +84,7 @@ struct fltThreadPool
 double fltGetTime();
 bool fltExtensionIsImg(const char* filename);
 bool fltExtensionIs(const char* filename, const char* ext);
-void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, fltThreadPool* tp);
+void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, fltThreadPool* tp, bool allInfo);
 bool fltReadImageAttr(const char* filename, fltImgAttr* attr);
 
 void fltThreadPool::init()
@@ -203,13 +203,12 @@ double fltGetTime()
 #endif
 }
 
-void fltCountNode(flt_node* n, int* tris)
+void fltCountNode(flt_node* n, fltu32* tris)
 {
   if ( !n ) return;
   
   while (n)
   {
-#ifdef FLT_UNIQUE_FACES
     if ( n->ndx_pairs_count )
     {
       fltu32 start,end;
@@ -219,13 +218,6 @@ void fltCountNode(flt_node* n, int* tris)
         *tris += (end-start+1)/3;
       }
     }
-#else
-    if (n->type == FLT_NODE_VLIST)
-    {
-      flt_node_vlist* vl = (flt_node_vlist*)n;
-      *tris += vl->count-2;
-    }
-#endif
     else
     {
       fltCountNode(n->child_head,tris);
@@ -235,20 +227,18 @@ void fltCountNode(flt_node* n, int* tris)
   
 }
 
-void fltCountOf(flt* of, int* tris)
+void fltCountOf(flt* of, fltu32* tris)
 {
   if ( !of || !of->hie ) return;
 
   fltCountNode(of->hie->node_root,tris);  
 }
 
-
 void fltXmlIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
-void fltXmlNodePrint(flt_node* n, int d)
+void fltXmlNodePrint(flt_node* n, fltThreadPool* tp, int d, bool allInfo)
 {
-  static const char* names[FLT_NODE_MAX]={"none","base","xref","gro","obj","mes","lod","fac", "vli", "swi"};
+  static const char* names[FLT_NODE_MAX]={"none", "base", "xref", "group", "object", "mesh", "lod", "face", "vlist", "switch"};
   static char tmp[256];
-  static fltu32 start,end;
   if ( !n ) return;
   // my siblings and children
   do
@@ -256,36 +246,34 @@ void fltXmlNodePrint(flt_node* n, int d)
     fltXmlIndent(d); 
     if ( n->child_count == 0 )
     {
-      if ( n->type==FLT_NODE_VLIST )
-      {
-        flt_node_vlist* vl=(flt_node_vlist*)n;
-        printf( "<%s inds=\"%d\"/>\n", names[n->type], vl->count);
-      }
-      else
-      {
-		    *tmp = 0;
-        if ( n->name && *n->name ) 
-          sprintf_s(tmp,"name=\"%s\"",n->name);
+		  *tmp = 0;
+      if ( n->name && *n->name ) 
+        sprintf_s(tmp," name=\"%s\"",n->name);
 
-#ifdef FLT_UNIQUE_FACES
-        if (n->ndx_pairs_count)
+      if ( *tmp || n->ndx_pairs_count ) 
+      {
+        fltu32 start=0,end;
+        fltCountNode(n,&start);
+        printf( "<%s%s tris=\"%d\">\n", names[n->type], tmp, start);
+        for (fltu32 i=0;i<n->ndx_pairs_count;++i)
         {
-          int inds=0;
-          for ( fltu32 i=0;i<n->ndx_pairs_count;++i ) { FLTGET32(n->ndx_pairs[i],start,end); inds += end-start+1; }
-          sprintf_s(tmp, "%s inds=\"%d\"", tmp, inds);
+          FLTGET32(n->ndx_pairs[i],start,end);
+          fltXmlIndent(d+1); printf( "<batch ndx_start=\"%d\" ndx_end=\"%d\" />\n", start,end );
         }
-#endif
-        if ( *tmp ) printf( "<%s %s/>\n", names[n->type], tmp);
-        else printf( "<%s/>\n", names[n->type]);
+        fltXmlIndent(d); printf( "</%s>\n", names[n->type]);
       }
+      else 
+        printf( "<%s/>\n", names[n->type]);
     }
     else
     {
-      if ( n->name && *n->name ) printf( "<%s name=\"%s\">\n", names[n->type], n->name);
-      else printf( "<%s>\n", names[n->type]);
+        if ( n->name && *n->name ) 
+          printf( "<%s name=\"%s\">\n", names[n->type], n->name);
+        else 
+          printf( "<%s>\n", names[n->type]);
     }
 
-    fltXmlNodePrint(n->child_head,d+1);
+    fltXmlNodePrint(n->child_head, tp, d+1, allInfo);
     if ( n->child_count )
     {
       fltXmlIndent(d); printf( "</%s>\n", names[n->type]);
@@ -294,7 +282,41 @@ void fltXmlNodePrint(flt_node* n, int d)
   }while(n);
 }
 
-void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, fltThreadPool* tp)
+void fltXmlPrintFace(int d, fltu32 facehash, flt_face* face)
+{
+  fltXmlIndent(d); printf( "<face hash=\"0x%08x\">\n", facehash );
+  {
+#ifndef FLT_LEAN_FACES
+    if ( face->name && *face->name ) { fltXmlIndent(d+1); printf( "<name>%s</name>\n", face->name ); }
+#endif
+    fltXmlIndent(d+1); printf( "<tex_base>%d</tex_base>\n", face->texbase_pat);
+    fltXmlIndent(d+1); printf( "<tex_detail>%d</tex_detail>\n", face->texdetail_pat);
+    fltXmlIndent(d+1); printf( "<abgr>0x%08x</abgr>\n", face->abgr);
+    fltXmlIndent(d+1); printf( "<shader>%d</shader>\n", face->shader_ndx);
+    fltXmlIndent(d+1); printf( "<material>%d</material>\n", face->mat_pat);
+    fltXmlIndent(d+1); printf( "<billboard>%d</billboard>\n", face->billb);
+    fltXmlIndent(d+1); printf( "<flags>0x%08x</flags>\n", face->flags);
+#ifndef FLT_LEAN_FACES
+    fltXmlIndent(d+1); printf( "<ir_color>0x%08x</ir_color>\n", face->ir_color);
+    fltXmlIndent(d+1); printf( "<ir_mat>%d</ir_mat>\n", face->ir_mat);  
+    fltXmlIndent(d+1); printf( "<tex_mapp>%d</tex_mapp>\n", face->texmapp_ndx);  
+    fltXmlIndent(d+1); printf( "<smc>%d</smc>\n", face->smc_id);
+    fltXmlIndent(d+1); printf( "<feat>%d</feat>\n", face->feat_id);
+    fltXmlIndent(d+1); printf( "<transp>%d</transp>\n", face->transp);
+    fltXmlIndent(d+1); printf( "<cname>%d</cname>\n", face->cname_ndx);
+    fltXmlIndent(d+1); printf( "<cname_alt>%d</cname_alt>\n", face->cnamealt_ndx);
+    fltXmlIndent(d+1); printf( "<draw>%s</draw>\n", flt_get_face_drawtype(face->draw_type));
+    fltXmlIndent(d+1); printf( "<light>%s</light>\n", flt_get_face_lightmode(face->light_mode));
+    fltXmlIndent(d+1); printf( "<lodgen>%d</lodgen>\n", face->lod_gen);
+    fltXmlIndent(d+1); printf( "<linestyle>%d</linestyle>\n", face->linestyle_ndx);
+#endif
+  }
+  
+  fltXmlIndent(d); printf( "</face>\n");
+}
+
+
+void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, fltThreadPool* tp, bool allInfo)
 {
   if ( !of || of->loaded != FLT_LOADED ) return;
   
@@ -342,29 +364,43 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
     }
     if ( of->pal )
     {
-      if ( of->pal->vtx_count )
-      {
-        fltXmlIndent(d+2); printf( "<vertices>%d</vertices>\n", of->pal->vtx_count);
-      }
-
-      int tris=0;
+      fltu32 tris=0;
       fltCountOf(of,&tris);
-      if ( tris )
-      {
-        fltXmlIndent(d+2); printf( "<triangles>%d</triangles>\n", tris);
-      }
-
-      if ( of->pal->tex_count )
-      {
-        fltXmlIndent(d+2); printf( "<textures>%d</textures>\n", of->pal->tex_count);
-      }
+      if ( of->pal->vtx_count ){ fltXmlIndent(d+2); printf( "<vertices>%d</vertices>\n", of->pal->vtx_count); }
+      if ( tris ){ fltXmlIndent(d+2); printf( "<triangles>%d</triangles>\n", tris); }
+      if ( of->pal->tex_count ){ fltXmlIndent(d+2); printf( "<textures>%d</textures>\n", of->pal->tex_count); }
     }
   }
   fltXmlIndent(d+1); printf( "</counters>\n");
 
+  // hierarchy and recursive print
+  if ( of->hie )
+  {
+    // hierarchy
+    fltXmlNodePrint(of->hie->node_root, tp, d+1,allInfo);
+
+    // flat list of extrefs
+    if ( of->hie->extref_count)
+    {
+      fltXmlIndent(d+1); printf( "<xrefs>\n" );
+      flt_node_extref* extref = of->hie->extref_head;
+      while ( extref )
+      {
+        if ( done.find( (uint64_t)extref->of ) == done.end() )
+        {
+          fltXmlOfPrint(extref->of, d+2, done,tot_nodes,tp, allInfo);
+          done.insert( (uint64_t)extref->of );
+        }
+        extref= (flt_node_extref*)extref->next_extref;
+      }
+      fltXmlIndent(d+1); printf( "</xrefs>\n" );
+    }
+  }
+
   // palettes
   if ( of->pal )
   {
+    // textures
     if(of->pal->tex_count)
     { 
       flt_pal_tex* tex = of->pal->tex_head;
@@ -383,41 +419,78 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
         }
         else
         {
-          fltXmlIndent(d+2); printf( "<tex>%s</tex>\n", tex->name );
+          fltXmlIndent(d+2); printf( "<tex w=\"-1\" h=\"-1\" d=\"-1\" size=\"-1\">%s</tex>\n", tex->name );
         }
         tex = tex->next;
       } 
       fltXmlIndent(d+1); printf( "</textures>\n");
     }
-  }
-  
-  // hierarchy and recursive print
-  if ( of->hie )
-  {
-    // hierarchy
-    fltXmlNodePrint(of->hie->node_root,d+1);
 
-    // flat list of extrefs
-    if ( of->hie->extref_count)
+    // verbose info
+    if ( allInfo )
     {
-      fltXmlIndent(d+1); printf( "<xrefs>\n" );
-      flt_node_extref* extref = of->hie->extref_head;
-      while ( extref )
+      // indices
+      if ( of->indices && of->indices->size )
       {
-        if ( done.find( (uint64_t)extref->of ) == done.end() )
+        fltXmlIndent(d+1); printf( "<indices count=\"%d\">\n", of->indices->size);
+        fltXmlIndent(d+2); printf( "<values>\n");
+        fltu32 hashe,indexvalue;
+        for ( fltu32 i=0;i<of->indices->size;++i)
         {
-          fltXmlOfPrint(extref->of, d+2, done,tot_nodes,tp);
-          done.insert( (uint64_t)extref->of );
+          FLTGET32(of->indices->data[i],hashe,indexvalue);
+          printf( "%d ",indexvalue);
         }
-        extref= (flt_node_extref*)extref->next_extref;
+        printf("\n");
+        fltXmlIndent(d+2); printf( "</values>\n");
+
+        fltXmlIndent(d+2); printf( "<facehashes>\n");
+
+        FLTGET32(of->indices->data[0],hashe,indexvalue);
+        fltu32 lasthashe=hashe;
+        fltu32 i=1,lasti=0;
+        do
+        {
+          FLTGET32(of->indices->data[i],hashe,indexvalue);
+          if ( hashe != lasthashe )
+          {
+            flt_dict_gethe(of->ctx->dictfaces,hashe,&indexvalue);
+            fltXmlIndent(d+3); printf( "<facehash count=\"%d\" hash=\"0x%08x\" />\n", i-lasti, indexvalue);
+            lasthashe=hashe;
+            lasti=i;
+          }
+          ++i;
+        }while (i<of->indices->size);
+
+        // last element (or unique)
+        flt_dict_gethe(of->ctx->dictfaces,hashe,&indexvalue);
+        fltXmlIndent(d+3); printf( "<facehash count=\"%d\" hash=\"0x%08x\" />\n", i-lasti, indexvalue);
+
+        fltXmlIndent(d+2); printf( "</facehashes>\n");
+        fltXmlIndent(d+1); printf( "</indices>\n");
       }
-      fltXmlIndent(d+1); printf( "</xrefs>\n" );
+
+      // faces
+      if ( of->ctx->dictfaces )
+      {
+        fltXmlIndent(d+1); printf( "<faces>\n" );
+        for ( int i = 0; i < of->ctx->dictfaces->capacity; ++i )
+        {
+          flt_dict_node* dn = of->ctx->dictfaces->hasht[i];          
+          while (dn)
+          {
+            fltXmlPrintFace(d+2, dn->keyhash, (flt_face*)dn->value);
+            dn = dn->next;
+          }
+        }
+        fltXmlIndent(d+1); printf( "</faces>\n" );
+      }
     }
   }
+
   fltXmlIndent(d); printf( "</file>\n");
 }
 
-void fltXmlPrint(flt* of, flt_opts* opts, int nfiles, double tim, fltThreadPool* tp)
+void fltXmlPrint(flt* of, flt_opts* opts, int nfiles, double tim, fltThreadPool* tp, bool allInfo)
 {
   std::set<uint64_t> done;
   int counterctx=0;
@@ -428,9 +501,7 @@ void fltXmlPrint(flt* of, flt_opts* opts, int nfiles, double tim, fltThreadPool*
   fltXmlIndent(2); printf("<loadtime>%.4g</loadtime>\n",tim);
   fltXmlIndent(2); printf("<files>%d</files>\n", nfiles);
   fltXmlIndent(2); printf("<faces>%d</faces>\n", TOTALNFACES);
-#ifdef FLT_UNIQUE_FACES
   fltXmlIndent(2); printf("<unique_faces>%d</unique_faces>\n", TOTALUNIQUEFACES);
-#endif
   fltXmlIndent(2); printf("<indices>%d</indices>\n", TOTALINDICES);
   fltXmlIndent(2); printf("<opcodes>\n");
   if ( opts->countable )
@@ -446,7 +517,7 @@ void fltXmlPrint(flt* of, flt_opts* opts, int nfiles, double tim, fltThreadPool*
   fltXmlIndent(2); printf("</opcodes>\n");
   fltXmlIndent(1); printf("</stats>\n");
 
-  fltXmlOfPrint(of,1,done,&counterctx, tp);
+  fltXmlOfPrint(of,1,done,&counterctx, tp, allInfo);
 
   printf( "</root>\n");
 }
@@ -492,13 +563,14 @@ int fltCallbackTexture(struct flt_pal_tex* texpal, struct flt* of, void* user_da
 }
 
 
-void read_with_callbacks_mt(const std::vector<std::string>& files, bool inspectTex)
+void read_with_callbacks_mt(const std::vector<std::string>& files, bool inspectTex, bool allInfo)
 {
   fltThreadPool tp;
   tp.numThreads = std::thread::hardware_concurrency()*2;
   tp.init();
   tp.inspectTexture=inspectTex;
 
+  // only reads position when no allInfo
   fltu16 vtxstream[]={
    flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12) 
 //   ,flt_vtx_stream_enc(FLT_VTX_COLOR    ,12, 4)
@@ -509,14 +581,14 @@ void read_with_callbacks_mt(const std::vector<std::string>& files, bool inspectT
   // configuring read options
   flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
   flt* of=(flt*)flt_calloc(1,sizeof(flt));
-  opts->palflags = FLT_OPT_PAL_ALL;
+  opts->palflags = FLT_OPT_PAL_TEXTURE | FLT_OPT_PAL_VERTEX;
   opts->hieflags = FLT_OPT_HIE_ALL_NODES | FLT_OPT_HIE_HEADER;
-  opts->dfaces_size = 1543;
-  opts->vtxstream = vtxstream;
+  opts->dfaces_size = 3079;//1543;
+  opts->vtxstream = allInfo ? FLT_NULL : vtxstream;
   opts->cb_texture = fltCallbackTexture;
   opts->cb_extref = fltCallbackExtRef;
   opts->cb_user_data = &tp;
-  opts->countable = (fltu32*)flt_calloc(1, sizeof(fltu32)*FLT_OP_MAX);
+  opts->countable = allInfo ? (fltatom32*)flt_calloc(1, sizeof(fltatom32)*FLT_OP_MAX) : FLT_NULL;
 
   // master file task
   tp.nfiles=1;
@@ -530,9 +602,10 @@ void read_with_callbacks_mt(const std::vector<std::string>& files, bool inspectT
     std::this_thread::sleep_for(std::chrono::milliseconds(100));    
   } while ( tp.isWorking() );
 
-  // printing
-  fltXmlPrint(of, opts, tp.nfiles, (fltGetTime()-t0)/1000.0, &tp);
+  // dumping info to xml
+  fltXmlPrint(of, opts, tp.nfiles, (fltGetTime()-t0)/1000.0, &tp, allInfo);
 
+  // releasing memory
   flt_release(of);
   flt_safefree(of);
   flt_safefree(opts->countable);
@@ -643,18 +716,19 @@ bool fltReadImageAttr(const char* filename, fltImgAttr* attr)
 
 int main(int argc, const char** argv)
 {
-  int c = fltCountBits(0xffffffff);
-  c = fltCountBits(0xff00);
-  c = fltCountBits(0xffff);
-
   bool inspectTex=false;  
+  bool allInfo=false;
   std::vector<std::string> files;
   for ( int i = 1; i < argc; ++i )
   {
     if ( argv[i][0]=='-' )
     {
-      if ( argv[i][1]=='t' )
-        inspectTex = true;
+      switch ( argv[i][1] )
+      {
+      case 't': inspectTex=true; break;
+      case 'a': allInfo=true; break;
+      default : printf ( "Unknown option -%c\n", argv[i][1]); 
+      }
     }
     else
       files.push_back( argv[i] );
@@ -662,22 +736,21 @@ int main(int argc, const char** argv)
 
   if ( !files.empty() )
   {
-    read_with_callbacks_mt(files, inspectTex);
+    read_with_callbacks_mt(files, inspectTex, allInfo);
   }
   else
   {
     char* program=flt_path_basefile(argv[0]);
-#ifdef FLT_UNIQUE_FACES
-    printf( "fltdumpu: Dumps (Unique Faces version) Openflight metadata in xml format\n\n" );    
-#else
-    printf( "fltdump: Dumps Openflight metadata in xml format\n\n" );    
-#endif
+    printf( "flt2xml: Dumps (Unique Faces version) Openflight metadata in xml format\n\n" );    
     printf( "Usage: $ %s <option> <flt_file> \nOptions:\n", program );    
     printf( "\t -t   : Inspect texture headers.\n" );    
+    printf( "\t -a   : Dump all information (vertices/faces)\n");
     printf( "\t Supported image formats: rgb, rgba, sgi, jpg, jpeg, png, tga, bmp, dds\n" );
     printf( "\nExamples:\n" );
-    printf( "\tDump all information into a file:\n" );
-    printf( "\t  $ %s master.flt -t > out.xml\n\n", program);    
+    printf( "\tDump all information recursively into a xml file:\n" );
+    printf( "\t  $ %s master.flt -t -a > out.xml\n\n", program);    
+    printf( "\tOnly writes structure info into xml:\n" );
+    printf( "\t  $ %s model.flt > model.xml\n\n", program );
     flt_free(program);
   }
   
