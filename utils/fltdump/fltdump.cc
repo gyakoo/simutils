@@ -209,13 +209,27 @@ void fltCountNode(flt_node* n, int* tris)
   
   while (n)
   {
+#ifdef FLT_UNIQUE_FACES
+    if ( n->ndx_pairs_count )
+    {
+      fltu32 start,end;
+      for (fltu32 i=0;i<n->ndx_pairs_count;++i)
+      {
+        FLTGET32(n->ndx_pairs[i],start,end);
+        *tris += (end-start+1)/3;
+      }
+    }
+#else
     if (n->type == FLT_NODE_VLIST)
     {
       flt_node_vlist* vl = (flt_node_vlist*)n;
       *tris += vl->count-2;
     }
+#endif
     else
+    {
       fltCountNode(n->child_head,tris);
+    }
     n = n->next;
   }
   
@@ -233,6 +247,8 @@ void fltXmlIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
 void fltXmlNodePrint(flt_node* n, int d)
 {
   static const char* names[FLT_NODE_MAX]={"none","base","xref","gro","obj","mes","lod","fac", "vli", "swi"};
+  static char tmp[256];
+  static fltu32 start,end;
   if ( !n ) return;
   // my siblings and children
   do
@@ -247,7 +263,19 @@ void fltXmlNodePrint(flt_node* n, int d)
       }
       else
       {
-        if ( n->name && *n->name ) printf( "<%s name=\"%s\"/>\n", names[n->type], n->name);
+		    *tmp = 0;
+        if ( n->name && *n->name ) 
+          sprintf_s(tmp,"name=\"%s\"",n->name);
+
+#ifdef FLT_UNIQUE_FACES
+        if (n->ndx_pairs_count)
+        {
+          int inds=0;
+          for ( fltu32 i=0;i<n->ndx_pairs_count;++i ) { FLTGET32(n->ndx_pairs[i],start,end); inds += end-start+1; }
+          sprintf_s(tmp, "%s inds=\"%d\"", tmp, inds);
+        }
+#endif
+        if ( *tmp ) printf( "<%s %s/>\n", names[n->type], tmp);
         else printf( "<%s/>\n", names[n->type]);
       }
     }
