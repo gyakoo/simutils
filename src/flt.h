@@ -56,11 +56,7 @@ DOCUMENTATION
 
 (Additional info)
 - Calls to load functions are thread safe
-- For the vertex palette, enough memory is reserved to avoid dynamic further allocations. This is done by
-    dividing the size of the palette by the smallest possible vertex, to compute an upper bound of no. of
-    vertices. Then allocate this no. of vertices for the bigger possible vertex. 
-    Worst case of unused memory would be if all vertices in the palette are the smallest one.
-- 
+- For the vertex palette (FLT_OPT_PAL_VERTEX) the whole vertex palete is stored directly into the buffer in memory
 
 (Important ToDo)
 - Parsing into callbacks, no memory allocated. Parsing from memory or specific reader.
@@ -120,7 +116,13 @@ DOCUMENTATION
 #define FLT_OPT_PAL_EXTGUID       (1<<14) // extension GUID
 #define FLT_OPT_PAL_VERTEX        (1<<15) // last node: vertex
 
-#define FLT_OPT_PAL_VTX_SOURCE    (1<<16) // use original vertex format
+#define FLT_OPT_PAL_VTX_POSITION  (1<<16)
+#define FLT_OPT_PAL_VTX_NORMAL    (1<<17)
+#define FLT_OPT_PAL_VTX_UV        (1<<18)
+#define FLT_OPT_PAL_VTX_COLOR     (1<<19)
+#define FLT_OPT_PAL_VTX_MASK      (0xf0000)
+#define FLT_OPT_PAL_VTX_POSITION_SINGLE (1<<20)
+
 #define FLT_OPT_PAL_ALL           (0xffff)// from bit 0 to 15
 
 //hierarchy/node flags (filter parsing of nodes and type of hierarchy)
@@ -146,18 +148,10 @@ DOCUMENTATION
 #define FLT_OPT_HIE_HEADER          (1<<20) // read header
 #define FLT_OPT_HIE_NO_NAMES        (1<<21) // don't store names
 #define FLT_OPT_HIE_EXTREF_RESOLVE  (1<<22) // unless this bit is set, ext refs aren't resolved
-#define FLT_OPT_HIE_RESERVED1        (1<<23) // not used
+#define FLT_OPT_HIE_RESERVED1       (1<<23) // not used
 #define FLT_OPT_HIE_COMMENTS        (1<<24) // include comments 
 #define FLT_OPT_HIE_RESERVED2       (1<<25)
 #define FLT_OPT_HIE_ALL_NODES           (0x7ffff) // from bit 0 to 18
-
-
-//////////////////////////////////////////////////////////////////////////
-// Vertex semantic (you can use the original vertex format or force another, see flt_opts)
-#define FLT_VTX_POSITION 0
-#define FLT_VTX_COLOR 1
-#define FLT_VTX_NORMAL 2
-#define FLT_VTX_UV0 3
 
 //////////////////////////////////////////////////////////////////////////
 #define FLT_NOTLOADED 0
@@ -248,22 +242,12 @@ extern "C" {
 
     // Returns reason of the error code. Define FLT_LONG_ERR_MESSAGES for longer texts.
   const char* flt_get_err_reason(int errcode);
-
-    // Encodes a vertex stream semantic word with the semantic and the offset
-  fltu16 flt_vtx_stream_enc(fltu8 semantic, fltu8 offset, fltu8 size);
-
-    // Decodes a vertex stream semantic word
-  void flt_vtx_stream_dec(fltu16 stream, fltu8* semantic, fltu8* offset, fltu8* size);
-
-    // Computes the size of a vertex stream in bytes
-  fltu32 flt_vtx_size(fltu16* vstr);
-
+  
   // Parsing options
   typedef struct flt_opts
   {
     fltu32 palflags;                          // palette flags        (FLT_OPT_PAL_*)
     fltu32 hieflags;                          // hierarchy/node flags (FLT_OPT_HIE_*)
-    fltu16* vtxstream;                        // optional custom forced vertex format or null for original
     fltu16 stacksize;                         // optional stack size (no of elements). 0 to use FLT_STACKARRAY_SIZE    
     fltu32 dfaces_size;                       // optional dict faces hash table size. 0 to use FLT_DICTFACES_SIZE
     fltu32 indices_size;                      // optional array initial capacity for indices. 0 to use FLT_INDICES_SIZE
@@ -280,9 +264,9 @@ extern "C" {
   {
     struct flt_pal_tex* tex_head;             // list of textures
     fltu32 tex_count;                         // no of textures
-    fltu8* vtx;                               // buffer of consecutive vertices
-    flti32* vtx_offsets;                      // two consecutive offset says the stride
-    fltu32 vtx_count;                         // no. of vertices
+    fltu8* vtx_buff;                               // buffer of consecutive vertices
+    fltu8* vtx_array;
+    fltu32 vtx_count;
   }flt_palettes;
 
   typedef struct flt_hie
@@ -699,7 +683,6 @@ typedef struct flt_context
 #endif
   struct flt_stack* stack;
   char* basepath;
-  fltu32 vtx_offset;
   fltu32 rec_count;
   fltu32 cur_depth;
   fltu16 op_last;        // immediate last  
@@ -821,8 +804,6 @@ void* flt_aligned_calloc(size_t nelem, size_t elsize, size_t alignment);
 int flt_err(int err, flt* of);
 int flt_read_ophead(fltu16 op, flt_op* data, FILE* f);
 void flt_swap_desc(void* data, flt_end_desc* desc);
-fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr, float* normal, float* uv);
-void flt_vtx_write(flt* of, fltu16* stream, double* xyz, fltu32 abgr, float* uv, float* normal);
 void flt_node_add(flt* of, flt_node* node);
 void flt_node_add_child(flt_node* parent, flt_node* node);
 FILE* flt_fopen(const char* filename, flt* of);
@@ -848,10 +829,6 @@ FLT_RECORD_READER(flt_reader_pal_tex);                // FLT_OP_PAL_TEXTURE
 FLT_RECORD_READER(flt_reader_longid);                 // FLT_OP_LONGID
 FLT_RECORD_READER(flt_reader_extref);                 // FLT_OP_EXTREF
 FLT_RECORD_READER(flt_reader_pal_vertex);             // FLT_OP_PAL_VERTEX
-FLT_RECORD_READER(flt_reader_vtx_color);              // FLT_OP_VERTEX_COLOR
-FLT_RECORD_READER(flt_reader_vtx_color_normal);       // FLT_OP_VERTEX_COLOR_NORMAL
-FLT_RECORD_READER(flt_reader_vtx_color_uv);           // FLT_OP_VERTEX_COLOR_UV
-FLT_RECORD_READER(flt_reader_vtx_color_normal_uv);    // FLT_OP_VERTEX_COLOR_NORMAL_UV
 FLT_RECORD_READER(flt_reader_vertex_list);            // FLT_OP_VERTEX_LIST
 static float flt_zerovec[4]={0};
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -928,16 +905,8 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   if ( opts->hieflags & FLT_OPT_HIE_GROUP )   { readtab[FLT_OP_GROUP] = flt_reader_group; use_node=FLT_TRUE; }
   if ( opts->hieflags & FLT_OPT_HIE_LOD )     { readtab[FLT_OP_LOD] = flt_reader_lod; use_node=FLT_TRUE; }
   if ( opts->hieflags & FLT_OPT_HIE_MESH )    { readtab[FLT_OP_MESH] = flt_reader_mesh; use_node=FLT_TRUE; }
-  if ( opts->hieflags & FLT_OPT_HIE_FACE )    { readtab[FLT_OP_FACE] = flt_reader_face; readtab[FLT_OP_VERTEX_LIST]= flt_reader_vertex_list; use_node=FLT_TRUE;}
-  if ( opts->palflags & FLT_OPT_PAL_VERTEX ) // if reading vertices
-  {
-    readtab[FLT_OP_VERTEX_COLOR] = flt_reader_vtx_color;
-    readtab[FLT_OP_VERTEX_COLOR_NORMAL] = flt_reader_vtx_color_normal;
-    readtab[FLT_OP_VERTEX_COLOR_UV] = flt_reader_vtx_color_uv;
-    readtab[FLT_OP_VERTEX_COLOR_NORMAL_UV] = flt_reader_vtx_color_normal_uv;
-    use_pal=FLT_TRUE;
-  }
-
+  if ( opts->hieflags & FLT_OPT_HIE_FACE )    { readtab[FLT_OP_FACE] = flt_reader_face; readtab[FLT_OP_VERTEX_LIST]= flt_reader_vertex_list; use_node=FLT_TRUE;}  
+  
   if (use_pal)
   {
     of->pal = (flt_palettes*)flt_calloc(1,sizeof(flt_palettes));
@@ -980,6 +949,9 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 
   flt_stack_popn(ctx->stack); // root
   flt_stack_destroy(&ctx->stack); // no needed anymore (also released in flt_release)
+  if (of->pal && of->pal->vtx_array) 
+    flt_safefree(of->pal->vtx_buff); // not needed the buffer anymore if we go the array
+
   of->loaded = FLT_LOADED;
   return flt_err(FLT_OK,of);
 }
@@ -1300,147 +1272,63 @@ FLT_RECORD_READER(flt_reader_longid)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
+fltu32 flt_compute_vertex_size(fltu32 palopts)
+{
+  fltu32 size = 0;
+
+  if (palopts & FLT_OPT_PAL_VTX_POSITION)
+  {
+    if (palopts & FLT_OPT_PAL_VTX_POSITION_SINGLE)
+      size += sizeof(float) * 3;
+    else
+      size += sizeof(double) * 3;
+  }
+
+  if (palopts & FLT_OPT_PAL_VTX_NORMAL)
+    size += sizeof(float) * 3;
+
+  if (palopts & FLT_OPT_PAL_VTX_UV)
+    size += sizeof(float) * 2;
+
+  if (palopts & FLT_OPT_PAL_VTX_COLOR)
+    size += sizeof(fltu32);
+
+  return size;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_pal_vertex)
 {
   flt_context* ctx=of->ctx;
   flt_opts* opts=ctx->opts;
-  int leftbytes, vmaxcount;
-  fltu32 vtxsize;
+  int leftbytes, palbytes;
+  fltu32 vsize = 0;
 
   // record header
   leftbytes = oh->length - sizeof(flt_op);
-  leftbytes -= (int)fread(&vmaxcount,1,flt_min(leftbytes,4),ctx->f);
-  flt_swap32(&vmaxcount); 
-
+  leftbytes -= (int)fread(&palbytes,1,flt_min(leftbytes,4),ctx->f);
+  flt_swap32(&palbytes); 
+  palbytes -= sizeof(flt_op) + 4;
+  leftbytes = palbytes; // size of palette minus header and marker
+  
   // read vertices from palette?
-  if ( opts->palflags & FLT_OPT_PAL_VERTEX )
+  if ( palbytes && opts->palflags & FLT_OPT_PAL_VERTEX )
   {
-    // no of vertices. Use smallest vtx record to have an upper bound of no. vertices in mem/file
-    vmaxcount -= sizeof(flt_op)+4;
-    vmaxcount /= 36; 
+    // saves the whole vertex
+    of->pal->vtx_buff = (fltu8*)flt_malloc( palbytes ); 
+    flt_mem_check(of->pal->vtx_buff, of->errcode);
+    leftbytes -= (int)fread(of->pal->vtx_buff, 1, palbytes, ctx->f);
 
-    vtxsize = flt_vtx_size(opts->vtxstream);
-
-    // uses the source vertex format (is variable format)?
-    if ( !vtxsize || (opts->palflags & FLT_OPT_PAL_VTX_SOURCE) )
+    vsize = flt_compute_vertex_size(opts->palflags);
+    if (vsize)
     {
-      opts->palflags |= FLT_OPT_PAL_VTX_SOURCE;
-      // allocates for the biggest format size to be sure we have enough memory
-      of->pal->vtx = (fltu8*)flt_malloc( vmaxcount * 48 ); 
-      flt_mem_check(of->pal->vtx, of->errcode);
-      // array of offsets. for the format of vertex i, it is the format to the associated vertex size (offset_next - offset)
-      of->pal->vtx_offsets = (flti32*)flt_malloc( vmaxcount * sizeof(flti32) );
-      flt_mem_check(of->pal->vtx_offsets, of->errcode);
-    }
-    else 
-    {
-      // force to use the passed in vertex stream format
-      of->pal->vtx = (fltu8*)flt_malloc( vmaxcount * vtxsize );
-      flt_mem_check(of->pal->vtx, of->errcode);
-      // in the pointer of offsets stores the negative of the vertex size
-      of->pal->vtx_offsets = (flti32*)(-(flti32)vtxsize);
+      palbytes /= 40; // upper bound of vertices
+      of->pal->vtx_array = (fltu8*)flt_malloc(palbytes*vsize);
+      flt_mem_check(of->pal->vtx_array, of->errcode);
+      of->pal->vtx_count = 0;
     }
   }
-  else
-  {
-    leftbytes = vmaxcount-sizeof(flt_op)-4;
-  }
-
-  return leftbytes;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-FLT_RECORD_READER(flt_reader_vtx_color)
-{
-  static fltu16 srcstream[]={1536, 4376, 0};
-  flt_context* ctx=of->ctx;
-  fltu16* stream= ( ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : ctx->opts->vtxstream;
-  int leftbytes=oh->length-sizeof(flt_op);  
-  double* coords; 
-  flti32* abgr;
-
-  // read data in
-  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,36),ctx->f);
-  coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
-  abgr=(flti32*)(ctx->tmpbuff+28); flt_swap32(abgr);
-
-  // stream for POSITION/COLOR
-  flt_vtx_write(of,stream,coords,*abgr,flt_zerovec,flt_zerovec);
-
-  return leftbytes;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-FLT_RECORD_READER(flt_reader_vtx_color_normal)
-{
-  static fltu16 srcstream[]={1536, 4376, 8988, 0};
-  flt_context* ctx=of->ctx;
-  fltu16* stream= ( ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : ctx->opts->vtxstream;
-  int leftbytes=oh->length-sizeof(flt_op);  
-  double* coords;
-  float* normal;
-  flti32* abgr;
-
-  // read data in
-  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,52),ctx->f);
-  coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
-  normal=(float*)(ctx->tmpbuff+28); flt_swap32(normal); flt_swap32(normal+1); flt_swap32(normal+2);
-  abgr=(flti32*)(ctx->tmpbuff+40); flt_swap32(abgr);
-
-  // stream for POSITION/COLOR/NORMAL
-  flt_vtx_write(of,stream,coords,*abgr,flt_zerovec,normal);
-
-  return leftbytes;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-FLT_RECORD_READER(flt_reader_vtx_color_uv)
-{
-  static fltu16 srcstream[]={1536, 4376, 12828, 0};
-  flt_context* ctx=of->ctx;
-  fltu16* stream= (ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : ctx->opts->vtxstream;
-  int leftbytes=oh->length-sizeof(flt_op);  
-  double* coords;
-  float* uv;
-  flti32* abgr;
-
-  // read data in
-  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,40),ctx->f);
-  coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
-  uv=(float*)(ctx->tmpbuff+28); flt_swap32(uv); flt_swap32(uv+1);
-  abgr=(flti32*)(ctx->tmpbuff+36); flt_swap32(abgr);
-
-  // stream for POSITION/COLOR/UV0
-  flt_vtx_write(of,stream,coords,*abgr,uv,flt_zerovec);
-
-  return leftbytes;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-FLT_RECORD_READER(flt_reader_vtx_color_normal_uv)
-{
-  static fltu16 srcstream[]={1536, 4376, 8988, 12840, 0};
-  flt_context* ctx=of->ctx;
-  fltu16* stream=( ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE ) ? srcstream : ctx->opts->vtxstream;
-  int leftbytes=oh->length-sizeof(flt_op);  
-  double* coords;
-  float* uv;
-  float* normal;
-  flti32* abgr;
-
-  // read data in
-  leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,60),ctx->f);
-  coords=(double*)(ctx->tmpbuff+4); flt_swap64(coords); flt_swap64(coords+1); flt_swap64(coords+2);
-  normal=(float*)(ctx->tmpbuff+28); flt_swap32(normal); flt_swap32(normal+1); flt_swap32(normal+2);
-  uv=(float*)(ctx->tmpbuff+40); flt_swap32(uv); flt_swap32(uv+1);
-  abgr=(flti32*)(ctx->tmpbuff+48); flt_swap32(abgr);
-
-  // stream for POSITION/COLOR/NORMAL/UV0
-  flt_vtx_write(of,stream,coords,*abgr,uv,normal);
 
   return leftbytes;
 }
@@ -1489,15 +1377,6 @@ FLT_RECORD_READER(flt_reader_face)
   face->linestyle_ndx = *(fltu8*)(ctx->tmpbuff+39);
 #endif
 
-  // get parent
-//   {
-//     sibling = flt_stack_pop(ctx->stack);
-//     parent = flt_stack_top_not_null(ctx->stack);
-//     if ( parent )
-//       ++parent->face_count;
-//     flt_stack_push(ctx->stack,sibling);
-//   }
-
 #ifdef FLT_UNIQUE_FACES
   // if we compiled for face palettes, let's do the hash thing 
   // we store the face hash in every face node
@@ -1511,8 +1390,10 @@ FLT_RECORD_READER(flt_reader_face)
     face = (flt_face*)flt_malloc(sizeof(flt_face));
     flt_mem_check(face,of->errcode);    
     *face = tmpf;
+#ifndef FLT_LEAN_FACES
     if ( !(ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES) && *ctx->tmpbuff )
       face->name = flt_strdup(ctx->tmpbuff);
+#endif
     flt_dict_insert(ctx->dictfaces, (const char*)face, face, FLT_FACESIZE_HASH, facehash, &hashentry);
   }  
 
@@ -1534,6 +1415,99 @@ FLT_RECORD_READER(flt_reader_face)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_vertex_write(flt* of, fltu32 vtxoffset)
+{
+  const fltu32 vsize = flt_compute_vertex_size(of->ctx->opts->palflags);
+  const fltu8* invtx = of->pal->vtx_buff + vtxoffset;
+  fltu16 op = *(fltu16*)(invtx);
+  fltu8* outvtx = of->pal->vtx_array + vsize*of->pal->vtx_count;
+  const fltu32 flags = of->ctx->opts->palflags;  
+  double *xyz = FLT_NULL;
+  float *normal=FLT_NULL;
+  float *uv = FLT_NULL;
+  fltu32 *abgr = FLT_NULL;
+  double *outd;
+  float *outf;
+  fltu32 *outc;
+  fltu32 offs;
+
+  flt_swap16(&op);
+  // getting input data
+  switch (op)
+  {
+  case FLT_OP_VERTEX_COLOR:
+    xyz = (double*)(invtx + 8);
+    abgr = (fltu32*)(invtx + 32);
+    break;
+  case FLT_OP_VERTEX_COLOR_NORMAL:
+    xyz = (double*)(invtx + 8);
+    normal = (float*)(invtx + 32);
+    abgr = (fltu32*)(invtx + 44);
+    break;
+  case FLT_OP_VERTEX_COLOR_UV:
+    xyz = (double*)(invtx + 8);
+    uv = (float*)(invtx + 32);
+    abgr = (fltu32*)(invtx + 40);
+    break;
+  case FLT_OP_VERTEX_COLOR_NORMAL_UV:
+    xyz = (double*)(invtx + 8);
+    normal = (float*)(invtx + 32);
+    uv = (float*)(invtx + 44);
+    abgr = (fltu32*)(invtx + 52);
+    break;
+  }
+
+  // swaping byte ordering
+  flt_swap64(xyz + 0); flt_swap64(xyz + 1); flt_swap64(xyz + 2);
+  flt_swap32(abgr);
+  if (normal) { flt_swap32(normal); flt_swap32(normal + 1); }else { normal = flt_zerovec; }
+  if (uv) { flt_swap32(uv); flt_swap32(uv + 1); }else { uv = flt_zerovec; }
+
+  // outputting data
+  offs = 0;
+  if (flags & FLT_OPT_PAL_VTX_POSITION)
+  {
+    if (flags & FLT_OPT_PAL_VTX_POSITION_SINGLE)
+    {
+      outf = (float*)(outvtx + offs);
+      outf[0] = (float)xyz[0]; outf[1] = (float)xyz[1]; outf[2] = (float)xyz[2];
+      offs += sizeof(float) * 3;
+    }
+    else
+    {
+      outd = (double*)(outvtx + offs);
+      outd[0] = xyz[0]; outd[1] = xyz[1]; outd[2] = xyz[2];
+      offs += sizeof(double) * 3;
+    }
+  }
+
+  if (flags & FLT_OPT_PAL_VTX_NORMAL)
+  {
+    outf = (float*)(outvtx + offs);
+    outf[0] = normal[0]; outf[1] = normal[1]; outf[2] = normal[2];
+    offs += sizeof(float) * 3;
+  }
+
+  if (flags & FLT_OPT_PAL_VTX_UV)
+  {
+    outf = (float*)(outvtx + offs);
+    outf[0] = uv[0]; outf[1] = uv[1];
+    offs += sizeof(float) * 2;
+  }
+
+  if (flags & FLT_OPT_PAL_VTX_COLOR)
+  {
+    outc = (fltu32*)(outvtx + offs);
+    *outc = *abgr;
+  }
+
+  *(fltu16*)(invtx) = 0;
+  *(fltu32*)(invtx + sizeof(fltu16)) = of->pal->vtx_count;
+  ++of->pal->vtx_count;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_vertex_list)
 {
   flt_context* ctx=of->ctx;
@@ -1547,7 +1521,7 @@ FLT_RECORD_READER(flt_reader_vertex_list)
 #ifdef FLT_UNIQUE_FACES
   const fltu32 max_ninds_read = sizeof(ctx->tmpbuff)/4; // max no of indices can be read at once
   fltu32* inds=(fltu32*)ctx->tmpbuff; // indices array
-  fltu32 oneind;
+  fltu32 vtxoffset;
   fltu64* pair;
   fltu32 thisndxstart,thisndxend,ndxstart,ndxend;
   flt_node* parentn;
@@ -1578,9 +1552,21 @@ FLT_RECORD_READER(flt_reader_vertex_list)
       // we got this batch of indices, let's swap it and encode it with the hash entry code
       for (i=0;i<n_inds;++i)
       {
-        oneind = inds[i];
-        flt_swap32(&oneind);
-        flt_array_push_back(of->indices, FLTMAKE64(hashe,oneind));
+        vtxoffset = inds[i];
+        flt_swap32(&vtxoffset);
+        vtxoffset -= sizeof(flt_op) + 4; // correct offset
+        
+        // if there's an array, then the vertices have to be compressed (remove boilerplate opcode data)
+        if (of->pal->vtx_array)
+        {
+          // get the opcode in vertex opcodes buffer
+          if (*(fltu16*)(of->pal->vtx_buff + vtxoffset) != 0)
+          {
+            flt_vertex_write(of, vtxoffset);
+          }
+          vtxoffset = *(fltu32*)(of->pal->vtx_buff + vtxoffset + 2);
+        }
+        flt_array_push_back(of->indices, FLTMAKE64(hashe,vtxoffset));
       }
 
       thisndxend = of->indices->size-1; // last index
@@ -1661,9 +1647,8 @@ void flt_release(flt* of)
     } 
 
     // vertex palette
-    flt_safefree(of->pal->vtx);
-    if ( (int)of->pal->vtx_offsets<-512 || (int)of->pal->vtx_offsets>0 ) 
-      flt_safefree(of->pal->vtx_offsets); // be sure it does not encode a fixed vertex size (negative)
+    flt_safefree(of->pal->vtx_buff);    
+    flt_safefree(of->pal->vtx_array);
 
     flt_safefree(of->pal);
   }
@@ -1856,25 +1841,6 @@ flt_node* flt_node_create(flt* of, int nodetype, const char* name)
       n->name = flt_strdup(name);
   }
   return n;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-void flt_vtx_write(flt* of, fltu16* stream, double* xyz, fltu32 abgr, float* uv, float* normal)
-{
-  flt_context* ctx=of->ctx;  
-  fltu8* vertex;
-
-  // offset to current vertex
-  vertex = of->pal->vtx + ctx->vtx_offset;
-
-  // if format source used, update array and use the source stream
-  // use source. gets offset to next vertex, saves pos+color, advance offset accordingly
-  if ( ctx->opts->palflags & FLT_OPT_PAL_VTX_SOURCE )
-    of->pal->vtx_offsets[of->pal->vtx_count] = ctx->vtx_offset;
-
-  ctx->vtx_offset += flt_vtx_write_sem(vertex, stream, xyz, abgr, normal, uv);   
-  ++of->pal->vtx_count;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2184,70 +2150,6 @@ void flt_vtx_stream_dec(fltu16 sem, fltu8* semantic, fltu8* offset, fltu8* size)
   *semantic = (fltu8)(sem>>12);
   *size = (fltu8)( (sem&0x0fc0)>>6 );
   *offset=(fltu8)( sem&0x003f );
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-// returns the number of bytes needed for the passed vertex stream format 
-////////////////////////////////////////////////////////////////////////////////////////////////
-fltu32 flt_vtx_size(fltu16* vstr)
-{
-  fltu8 sem,offs,size;
-  fltu32 totalsize=0;
-
-  if ( !vstr ) return 0;
-  while (*vstr)
-  {
-    flt_vtx_stream_dec(*vstr,&sem,&offs,&size);
-    totalsize+=size;
-    ++vstr;
-  }
-  return totalsize;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-fltu32 flt_vtx_write_sem(fltu8* outdata, fltu16* vstream, double* xyz, fltu32 abgr, float* normal, float* uv)
-{
-  fltu32 tsize=0;
-  fltu8 tgt_sem,offs,size;
-  float* floats; 
-  int i;
-  const float invc=1.0f/255.f;
-
-  while (*vstream)
-  {
-    // this semantic
-    flt_vtx_stream_dec(*vstream,&tgt_sem,&offs,&size);
-    tsize+=size;
-    switch(tgt_sem)
-    {
-    case FLT_VTX_POSITION: // support for float/double positions
-      floats = (float*)(outdata+offs);
-      switch(size)
-      {
-      case 12: for (i=0;i<3;++i) floats[i]=(float)xyz[i]; break; // expecting 3 floats
-      case 16: for (i=0;i<3;++i) floats[i]=(float)xyz[i]; floats[3]=1.0f; break; // expecting 4 floats
-      case 24: memcpy(outdata+offs,xyz,24); break; // expecting 3 doubles (same as flt)
-      case 32: memcpy(outdata+offs,xyz,24); *((double*)(outdata+offs+24)) = 1.0; break; // expecting 4 doubles
-      }
-      break;
-    case FLT_VTX_COLOR : 
-      switch(size)
-      {
-      case 4 : *(fltu32*)(outdata+offs)=abgr; break; // expecting packed color
-      case 12: floats=(float*)(outdata+offs); // expecting 3 floats normalized color
-        floats[0]=(abgr>>24)*invc;        floats[1]=((abgr>>16)&0xff)*invc; 
-        floats[2]=((abgr>>8)&0xff)*invc;  floats[3]=(abgr&0xff)*invc;
-        break;
-      }
-      
-      break;
-    case FLT_VTX_NORMAL: floats = (float*)(outdata+offs); for (i=0;i<3;++i) floats[i]=normal[i]; break; // 3 normals
-    case FLT_VTX_UV0   : floats = (float*)(outdata+offs); for (i=0;i<(int)(size/sizeof(float));++i) floats[i]=i<2 ? uv[i] : 0.0f; break; // 2 or 3 uv comps
-    }
-    ++vstream;
-  }
-  return tsize;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////

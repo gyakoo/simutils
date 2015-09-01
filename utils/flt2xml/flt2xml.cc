@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 //#define FLT_NO_OPNAMES
-//#define FLT_LEAN_FACES
+#define FLT_LEAN_FACES
 //#define FLT_ALIGNED
 //#define FLT_UNIQUE_FACES
 #define FLT_IMPLEMENTATION
@@ -254,7 +254,10 @@ void fltXmlNodePrint(flt_node* n, fltThreadPool* tp, int d, bool allInfo)
       {
         fltu32 start=0,end;
         fltCountNode(n,&start);
-        printf( "<%s%s tris=\"%d\">\n", names[n->type], tmp, start);
+        if ( start )
+          printf( "<%s%s tris=\"%d\">\n", names[n->type], tmp, start);
+        else
+          printf("<%s%s>\n", names[n->type], tmp);
         for (fltu32 i=0;i<n->ndx_pairs_count;++i)
         {
           FLTGET32(n->ndx_pairs[i],start,end);
@@ -286,9 +289,6 @@ void fltXmlPrintFace(int d, fltu32 facehash, flt_face* face)
 {
   fltXmlIndent(d); printf( "<face hash=\"0x%08x\">\n", facehash );
   {
-#ifndef FLT_LEAN_FACES
-    if ( face->name && *face->name ) { fltXmlIndent(d+1); printf( "<name>%s</name>\n", face->name ); }
-#endif
     fltXmlIndent(d+1); printf( "<tex_base>%d</tex_base>\n", face->texbase_pat);
     fltXmlIndent(d+1); printf( "<tex_detail>%d</tex_detail>\n", face->texdetail_pat);
     fltXmlIndent(d+1); printf( "<abgr>0x%08x</abgr>\n", face->abgr);
@@ -362,13 +362,14 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
       fltXmlIndent(d+2); printf( "<nodes>%d</nodes>\n", of->hie->node_count); 
       *tot_nodes += of->hie->node_count; 
     }
+
     if ( of->pal )
     {
       fltu32 tris=0;
-      fltCountOf(of,&tris);
-      if ( of->pal->vtx_count ){ fltXmlIndent(d+2); printf( "<vertices>%d</vertices>\n", of->pal->vtx_count); }
+      fltCountOf(of,&tris);      
+      if (of->pal->vtx_count) { fltXmlIndent(d + 2); printf("<vertices>%d</vertices>\n", of->pal->vtx_count); }
       if ( tris ){ fltXmlIndent(d+2); printf( "<triangles>%d</triangles>\n", tris); }
-      if ( of->pal->tex_count ){ fltXmlIndent(d+2); printf( "<textures>%d</textures>\n", of->pal->tex_count); }
+      if ( of->pal->tex_count ){ fltXmlIndent(d+2); printf( "<textures>%d</textures>\n", of->pal->tex_count); }      
     }
   }
   fltXmlIndent(d+1); printf( "</counters>\n");
@@ -429,6 +430,54 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
     // verbose info
     if ( allInfo )
     {
+      // vertices
+      if (of->pal && of->pal->vtx_array)
+      {
+        const bool hasPosition = (of->ctx->opts->palflags & FLT_OPT_PAL_VTX_POSITION) != 0;
+        const bool singlePos = (of->ctx->opts->palflags & FLT_OPT_PAL_VTX_POSITION_SINGLE) != 0;
+        const bool hasNormal = (of->ctx->opts->palflags & FLT_OPT_PAL_VTX_NORMAL) != 0;
+        const bool hasUv = (of->ctx->opts->palflags & FLT_OPT_PAL_VTX_UV) != 0;
+        const bool hasColor = (of->ctx->opts->palflags & FLT_OPT_PAL_VTX_COLOR) != 0;
+        char sem[5] = { hasPosition?'P':' ', hasNormal?'N':' ', hasUv?'T':' ', hasColor?'C':' ', 0 };
+        fltXmlIndent(d + 1); printf("<vertices type=\"array\" count=\"%d\" semantic=\"%s\">\n", of->pal->vtx_count, sem);
+
+        fltu32 offs;
+        double* pd;
+        float* pf;
+        fltu32* pc;
+        char tmp[256];
+        fltu8* vtx=of->pal->vtx_array;
+        fltu32 vsize = flt_compute_vertex_size(of->ctx->opts->palflags);
+        for (fltu32 i = 0; i < of->pal->vtx_count; ++i, vtx += vsize)
+        {
+          offs = 0;
+          if (hasPosition)
+          {
+            if (singlePos) { pf = (float*)(vtx); sprintf_s(tmp, "P=\"%g %g %g\"", pf[0], pf[1], pf[2]); offs += sizeof(float) * 3; }
+            else { pd = (double*)(vtx); sprintf_s(tmp, "P=\"%g %g %g\"", pd[0], pd[1], pd[2]); offs += sizeof(double) * 3; }
+          }
+          if (hasNormal)
+          {
+            pf = (float*)(vtx + offs);
+            sprintf_s(tmp, " N=\"%g %g %g\"", pf[0], pf[1], pf[2]);
+            offs += sizeof(float) * 3;
+          }
+          if (hasUv)
+          {
+            pf = (float*)(vtx + offs);
+            sprintf_s(tmp, " T=\"%g %g\"", pf[0], pf[1]);
+            offs += sizeof(float) * 2;
+          }
+          if ( hasColor)
+          { 
+            pc = (fltu32*)(vtx + offs);
+            sprintf_s(tmp, " C=\"0x%08x\"", *pc);
+          }
+          fltXmlIndent(d + 2); printf("<v %s />\n", tmp);
+        }
+        fltXmlIndent(d + 1); printf("</vertices>\n");
+      }
+
       // indices
       if ( of->indices && of->indices->size )
       {
@@ -563,30 +612,21 @@ int fltCallbackTexture(struct flt_pal_tex* texpal, struct flt* of, void* user_da
 }
 
 
-void read_with_callbacks_mt(const std::vector<std::string>& files, bool inspectTex, bool allInfo)
+void read_with_callbacks_mt(const std::vector<std::string>& files, bool inspectTex, bool allInfo, bool recurse)
 {
   fltThreadPool tp;
   tp.numThreads = std::thread::hardware_concurrency()*2;
   tp.init();
   tp.inspectTexture=inspectTex;
 
-  // only reads position when no allInfo
-  fltu16 vtxstream[]={
-   flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12) 
-//   ,flt_vtx_stream_enc(FLT_VTX_COLOR    ,12, 4)
-//   ,flt_vtx_stream_enc(FLT_VTX_NORMAL   ,16,12)
-//  ,flt_vtx_stream_enc(FLT_VTX_UV0      ,12, 8)
-  ,FLT_NULL};
-
   // configuring read options
   flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
   flt* of=(flt*)flt_calloc(1,sizeof(flt));
-  opts->palflags = FLT_OPT_PAL_TEXTURE | FLT_OPT_PAL_VERTEX;
+  opts->palflags = FLT_OPT_PAL_TEXTURE | FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_POSITION;
   opts->hieflags = FLT_OPT_HIE_ALL_NODES | FLT_OPT_HIE_HEADER;
   opts->dfaces_size = 3079;//1543;
-  opts->vtxstream = allInfo ? FLT_NULL : vtxstream;
   opts->cb_texture = fltCallbackTexture;
-  opts->cb_extref = fltCallbackExtRef;
+  opts->cb_extref = recurse ? fltCallbackExtRef : FLT_NULL;
   opts->cb_user_data = &tp;
   opts->countable = allInfo ? (fltatom32*)flt_calloc(1, sizeof(fltatom32)*FLT_OP_MAX) : FLT_NULL;
 
@@ -604,6 +644,8 @@ void read_with_callbacks_mt(const std::vector<std::string>& files, bool inspectT
 
   // dumping info to xml
   fltXmlPrint(of, opts, tp.nfiles, (fltGetTime()-t0)/1000.0, &tp, allInfo);
+
+  MessageBox(NULL, "continue", "continue", MB_OK);
 
   // releasing memory
   flt_release(of);
@@ -718,6 +760,7 @@ int main(int argc, const char** argv)
 {
   bool inspectTex=false;  
   bool allInfo=false;
+  bool recurse = false;
   std::vector<std::string> files;
   for ( int i = 1; i < argc; ++i )
   {
@@ -727,6 +770,7 @@ int main(int argc, const char** argv)
       {
       case 't': inspectTex=true; break;
       case 'a': allInfo=true; break;
+      case 'r': recurse = true; break;
       default : printf ( "Unknown option -%c\n", argv[i][1]); 
       }
     }
@@ -736,21 +780,22 @@ int main(int argc, const char** argv)
 
   if ( !files.empty() )
   {
-    read_with_callbacks_mt(files, inspectTex, allInfo);
+    read_with_callbacks_mt(files, inspectTex, allInfo, recurse);
   }
   else
   {
     char* program=flt_path_basefile(argv[0]);
-    printf( "flt2xml: Dumps (Unique Faces version) Openflight metadata in xml format\n\n" );    
-    printf( "Usage: $ %s <option> <flt_file> \nOptions:\n", program );    
-    printf( "\t -t   : Inspect texture headers.\n" );    
-    printf( "\t -a   : Dump all information (vertices/faces)\n");
-    printf( "\t Supported image formats: rgb, rgba, sgi, jpg, jpeg, png, tga, bmp, dds\n" );
-    printf( "\nExamples:\n" );
-    printf( "\tDump all information recursively into a xml file:\n" );
-    printf( "\t  $ %s master.flt -t -a > out.xml\n\n", program);    
-    printf( "\tOnly writes structure info into xml:\n" );
-    printf( "\t  $ %s model.flt > model.xml\n\n", program );
+    printf("flt2xml: Dumps (Unique Faces version) Openflight metadata in xml format\n\n" );    
+    printf("Usage: $ %s <option> <flt_file> \nOptions:\n", program );    
+    printf("\t -t   : Inspect texture headers.\n" );    
+    printf("\t -a   : Dump all information (vertices/faces)\n");
+    printf("\t -r   : Recursive. Resolve all external references recursively\n");
+    printf("\t Supported image formats: rgb, rgba, sgi, jpg, jpeg, png, tga, bmp, dds\n" );
+    printf("\nExamples:\n" );
+    printf("\tDump all information recursively into a xml file:\n" );
+    printf("\t  $ %s master.flt -t -a -r > alldb.xml\n\n", program);    
+    printf("\tOnly writes structure info into xml:\n" );
+    printf("\t  $ %s model.flt > model.xml\n\n", program );
     flt_free(program);
   }
   

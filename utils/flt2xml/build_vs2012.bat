@@ -10,7 +10,7 @@ if %ERRORLEVEL% NEQ 0 (
   echo Download it from: https://premake.github.io/
   goto end
 )
-premake5 --file=premake5.lua vs2012 
+%PREMAKECMD% --file=premake5.lua vs2012 
 
 
 :end
