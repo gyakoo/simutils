@@ -14,10 +14,8 @@
 #define FLT_IMPLEMENTATION
 #include <flt.h>
 
-#ifndef FLT_ONLY_PARSER
 #define VIS_IMPLEMENTATION
 #include <vis.h>
-#endif
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -76,7 +74,6 @@ struct fltThreadPool
 double fltGetTime();
 bool fltExtensionIsImg(const char* filename);
 bool fltExtensionIs(const char* filename, const char* ext);
-void fltPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes);
 
 void fltThreadPool::init()
 {
@@ -181,73 +178,6 @@ double fltGetTime()
 #endif
 }
 
-void fltIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
-void fltPrintNode(flt_node* n, int d)
-{
-  static const char* names[]={"NONE","BASE","EXTREF","GROUP","OBJECT","MESH","LOD","FACE", "VLIST"};
-  if ( !n ) return;
-
-  // my siblings and children
-  do
-  {
-    fltIndent(d); printf( "(%s) %s\n", names[n->type], n->name?n->name:"");
-    fltPrintNode(n->child_head,d+1);
-    n = n->next;
-  }while(n);
-}
-
-void fltPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes)
-{
-  if ( !of || of->loaded != FLT_LOADED ) return;
-  // header
-  printf( "\n" );
-  fltIndent(d); printf( "%s\n", of->filename);
-  fltIndent(d); printf( "Records: %d\n", of->ctx->rec_count );
-  if ( of->hie && of->hie->node_count) 
-  { 
-    fltIndent(d); printf( "Nodes: %d\n", of->hie->node_count); 
-    *tot_nodes += of->hie->node_count; 
-  }
-
-  // palettes
-  if ( of->pal )
-  {
-    if(of->pal->vtx_count){ fltIndent(d); printf( "Vertices: %d\n", of->pal->vtx_count);}
-    if(of->pal->tex_count)
-    { 
-      fltIndent(d); printf( "Textures: %d\n", of->pal->tex_count);
-      flt_pal_tex* tex = of->pal->tex_head;
-      while (tex)
-      {
-        fltIndent(d+1); printf( "%s\n", tex->name );
-        tex = tex->next;
-      } 
-    }
-  }
-  
-  // hierarchy and recursive print
-  if ( of->hie )
-  {
-    // hierarchy
-    fltPrintNode(of->hie->node_root,d);
-
-    // flat list of extrefs
-    if ( of->hie->extref_count)
-    {
-      fltIndent(d); printf( "Ext.References: %d\n", of->hie->extref_count );
-      flt_node_extref* extref = of->hie->extref_head;
-      while ( extref )
-      {
-        if ( done.find( (uint64_t)extref->of ) == done.end() )
-        {
-          fltPrint(extref->of, d+1, done,tot_nodes);
-          done.insert( (uint64_t)extref->of );
-        }
-        extref= (flt_node_extref*)extref->next_extref;
-      }
-    }
-  }
-}
 
 //////////////////////////////////////////////////////////////////////////
 // This callback is a good place to build a full path to the external reference
@@ -278,18 +208,10 @@ void read_with_callbacks_mt(const char* filename)
   tp.numThreads = std::thread::hardware_concurrency();
   tp.init();
 
-  fltu16 vtxstream[]={
-   flt_vtx_stream_enc(FLT_VTX_POSITION , 0,12) 
-//   ,flt_vtx_stream_enc(FLT_VTX_COLOR    ,12, 4)
-//   ,flt_vtx_stream_enc(FLT_VTX_NORMAL   ,16,12)
-  ,flt_vtx_stream_enc(FLT_VTX_UV0      ,12, 8)
-  ,FLT_NULL};
-
   // configuring read options
   opts->palflags = FLT_OPT_PAL_ALL;
-  opts->hieflags = FLT_OPT_HIE_ALL;
+  opts->hieflags = FLT_OPT_HIE_ALL_NODES;
   opts->dfaces_size = 1543;
-  opts->vtxstream = vtxstream;
   opts->cb_extref = fltCallbackExtRef;
   opts->cb_user_data = &tp;
 
@@ -304,12 +226,8 @@ void read_with_callbacks_mt(const char* filename)
     std::this_thread::sleep_for(std::chrono::milliseconds(100));    
   } while ( tp.isWorking() );
 
-  // printing
-  std::set<uint64_t> done;
-  int counterctx=0;
-  fltPrint(of,0,done, &counterctx);
-
-  char tmp[256]; sprintf_s(tmp, "Time: %.4g secs", (fltGetTime()-t0)/1000.0);
+  char tmp[256]; 
+  sprintf_s(tmp, "Time: %.4g secs", (fltGetTime()-t0)/1000.0);
   printf( "\n%s\n",tmp);
   printf("nfiles total: %d\n", tp.nfiles);
   printf("nfaces total : %d\n", TOTALNFACES);
@@ -318,7 +236,6 @@ void read_with_callbacks_mt(const char* filename)
 #endif
   printf("nindices total: %d\n", TOTALINDICES);
 
-#ifndef FLT_ONLY_PARSER
   {
     vis* v;
     vis_opts opts;
@@ -335,7 +252,6 @@ void read_with_callbacks_mt(const char* filename)
       vis_release(&v);
     }
   }
-#endif
   flt_release(of);
   flt_safefree(of);
   flt_safefree(opts);
@@ -343,41 +259,10 @@ void read_with_callbacks_mt(const char* filename)
   tp.deinit();
 }
 
-void print_hie(const char* filename)
-{
-  double t0;
-  flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
-  flt* of=(flt*)flt_calloc(1,sizeof(flt));
-
-  // actual read
-  opts->palflags |= FLT_OPT_PAL_ALL;
-  opts->hieflags |= /*FLT_OPT_HIE_RESERVED |  FLT_OPT_HIE_NO_NAMES|*/FLT_OPT_HIE_EXTREF_RESOLVE|FLT_OPT_HIE_ALL;
-  opts->dfaces_size = 1543;
-  t0=fltGetTime(); 
-
-  flt_load_from_filename(filename,of,opts);
-
-  std::set<uint64_t> done;
-  int counterctx=0;
-  fltPrint(of,0,done, &counterctx);
-
-  printf("nfaces total : %d\n", TOTALNFACES);
-  printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
-  printf( "\nTime: %g secs\n", (fltGetTime()-t0)/1000.0 );
-  printf("nindices total: %d\n", TOTALINDICES);
-  MessageBoxA(NULL,"continue","continue",MB_OK);
-  flt_release(of);
-  flt_safefree(of);
-  flt_safefree(opts);
-}
-
 int main(int argc, const char** argv)
 {
   argc=argc;
   argv=argv;
-  //print_hie("../../../data/camp/master.flt");
-  //read_with_callbacks_mt("../../../data/camp/master.flt");
   read_with_callbacks_mt("../../../data/utah/master.flt");
-  //read_with_callbacks_mt("../../../data/Terrain_Standard/ds205-townbuildings_lowres/master_of_town.flt");
   return 0;
 }

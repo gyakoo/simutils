@@ -15,7 +15,7 @@ premake5 --file=premake5_dx11.lua vs2012
 
 :end
 
-xcopy ..\..\extern\vld\bin\Win32\*.* build\bin\x32\debug\ /Y
-xcopy ..\..\extern\vld\bin\Win64\*.* build\bin\x64\debug\ /Y
+xcopy ..\..\extern\vld\bin\Win32\*.* buildvs2012\bin\x32\debug\ /Y
+xcopy ..\..\extern\vld\bin\Win64\*.* buildvs2012\bin\x64\debug\ /Y
 echo.
 pause

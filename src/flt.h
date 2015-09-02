@@ -71,13 +71,11 @@ DOCUMENTATION
 /////////////////////
 
 #ifdef _MSC_VER
-#include <Windows.h>
+#include <Windows.h> // mainly for the critical section object
 #pragma warning(disable:4244 4100 4996 4706 4091 4310)
 #endif
 
-/* 
- * Error codes
-*/
+// Error codes
 #define FLT_OK 0
 #define FLT_ERR_FOPEN 1
 #define FLT_ERR_OPREAD 2
@@ -86,11 +84,11 @@ DOCUMENTATION
 #define FLT_ERR_READBEYOND_REC 5
 #define FLT_ERR_ALREADY 6
 
+// Versioning
 #define FLT_GREATER_SUPPORTED_VERSION 1640
 #ifndef FLT_VERSION
 #define FLT_VERSION FLT_GREATER_SUPPORTED_VERSION
 #endif
-
 #if FLT_VERSION > FLT_GREATER_SUPPORTED_VERSION
 #error Openflight FLT version not supported. Max. supported version FLT_LAST_VERSION_SUPPORTED
 #endif
@@ -115,15 +113,14 @@ DOCUMENTATION
 #define FLT_OPT_PAL_LINKAGE       (1<<13) // linkage
 #define FLT_OPT_PAL_EXTGUID       (1<<14) // extension GUID
 #define FLT_OPT_PAL_VERTEX        (1<<15) // last node: vertex
+#define FLT_OPT_PAL_ALL           (0xffff)// from bit 0 to 15
 
 #define FLT_OPT_PAL_VTX_POSITION  (1<<16)
 #define FLT_OPT_PAL_VTX_NORMAL    (1<<17)
 #define FLT_OPT_PAL_VTX_UV        (1<<18)
 #define FLT_OPT_PAL_VTX_COLOR     (1<<19)
-#define FLT_OPT_PAL_VTX_MASK      (0xf0000)
 #define FLT_OPT_PAL_VTX_POSITION_SINGLE (1<<20)
-
-#define FLT_OPT_PAL_ALL           (0xffff)// from bit 0 to 15
+#define FLT_OPT_PAL_VTX_MASK      (FLT_OPT_PAL_VTX_POSITION|FLT_OPT_PAL_VTX_NORMAL|FLT_OPT_PAL_VTX_UV|FLT_OPT_PAL_VTX_COLOR)
 
 //hierarchy/node flags (filter parsing of nodes and type of hierarchy)
 #define FLT_OPT_HIE_GROUP         (1<<0) // node first
@@ -145,13 +142,15 @@ DOCUMENTATION
 #define FLT_OPT_HIE_CAT           (1<<16)
 #define FLT_OPT_HIE_CURVE         (1<<17) 
 #define FLT_OPT_HIE_FACE          (1<<18) // node last
-#define FLT_OPT_HIE_HEADER          (1<<20) // read header
-#define FLT_OPT_HIE_NO_NAMES        (1<<21) // don't store names
-#define FLT_OPT_HIE_EXTREF_RESOLVE  (1<<22) // unless this bit is set, ext refs aren't resolved
-#define FLT_OPT_HIE_RESERVED1       (1<<23) // not used
-#define FLT_OPT_HIE_COMMENTS        (1<<24) // include comments 
-#define FLT_OPT_HIE_RESERVED2       (1<<25)
-#define FLT_OPT_HIE_ALL_NODES           (0x7ffff) // from bit 0 to 18
+#define FLT_OPT_HIE_ALL_NODES     (0x7ffff) // from bit 0 to 18
+
+#define FLT_OPT_HIE_HEADER          (1<<19) // read header
+#define FLT_OPT_HIE_NO_NAMES        (1<<20) // don't store names nor longids
+#define FLT_OPT_HIE_EXTREF_RESOLVE  (1<<21) // xrefs aren't resolved by default, set this bit to make it
+#define FLT_OPT_HIE_COMMENTS        (1<<22) // include comments 
+
+#define FLT_OPT_HIE_RESERVED1       (1<<30) // not used
+#define FLT_OPT_HIE_RESERVED2       (1<<31)
 
 //////////////////////////////////////////////////////////////////////////
 #define FLT_NOTLOADED 0
@@ -171,6 +170,7 @@ DOCUMENTATION
 #define FLT_OP_POPSUBFACE 20
 #define FLT_OP_PUSHEXTENSION 21
 #define FLT_OP_POPEXTENSION 22
+#define FLT_OP_CONTINUATION 23
 #define FLT_OP_COMMENT 31
 #define FLT_OP_LONGID 33
 #define FLT_OP_EXTREF 63
@@ -183,6 +183,8 @@ DOCUMENTATION
 #define FLT_OP_VERTEX_LIST 72
 #define FLT_OP_LOD 73
 #define FLT_OP_MESH 84
+#define FLT_OP_LOCAL_VERTEX_POOL 85
+#define FLT_OP_MESH_PRIMITIVE 86
 #define FLT_OP_SWITCH 96
 #define FLT_OP_MAX 154
 
@@ -242,12 +244,16 @@ extern "C" {
 
     // Returns reason of the error code. Define FLT_LONG_ERR_MESSAGES for longer texts.
   const char* flt_get_err_reason(int errcode);
+
+#ifdef FLT_WRITER
+  int flt_write_to_filename(struct flt* of);
+#endif
   
   // Parsing options
   typedef struct flt_opts
   {
-    fltu32 palflags;                          // palette flags        (FLT_OPT_PAL_*)
-    fltu32 hieflags;                          // hierarchy/node flags (FLT_OPT_HIE_*)
+    fltu32 pflags;                          // palette flags        (FLT_OPT_PAL_*)
+    fltu32 hflags;                          // hierarchy/node flags (FLT_OPT_HIE_*)
     fltu16 stacksize;                         // optional stack size (no of elements). 0 to use FLT_STACKARRAY_SIZE    
     fltu32 dfaces_size;                       // optional dict faces hash table size. 0 to use FLT_DICTFACES_SIZE
     fltu32 indices_size;                      // optional array initial capacity for indices. 0 to use FLT_INDICES_SIZE
@@ -393,10 +399,18 @@ extern "C" {
     flti16 flags;
   }flt_node_group;
 
+  typedef struct flt_mesh_vb
+  {
+    fltu32 semantic;
+    fltu32 count;
+    fltu8* vertices;
+  }flt_mesh_vb;
+
   typedef struct flt_node_mesh
   {
     struct flt_node base;
-
+    struct flt_face attribs;
+    struct flt_mesh_vb* vb;
   }flt_node_mesh;
 
   typedef struct flt_node_lod
@@ -412,9 +426,11 @@ extern "C" {
 
   typedef struct flt_node_switch
   {
-    struct flt_node base;
+    struct flt_node base;    
     fltu32 cur_mask;
     fltu32 mask_count;
+    fltu32 wpm;         // words per mask
+    fltu32* maskwords;    
   }flt_node_switch;
 
 #ifndef FLT_UNIQUE_FACES
@@ -515,6 +531,12 @@ extern "C" {
 #endif
 
 #define FLT_ASSERT(c) { if (!(c)){ FLT_BREAK; } }
+
+#ifdef _MSC_VER
+#define FLT_BREAK_ALWAYS { __debugbreak(); }
+#else
+#define FLT_BREAK_ALWAYS { raise(SIGTRAP); }
+#endif
 
 #else
 #define FLT_BREAK {(void*)0;}
@@ -640,8 +662,14 @@ void flt_swap64(void* d)
 {
   unsigned char* b=(unsigned char*)d;
   const unsigned char t0=b[0], t1=b[1], t2=b[2], t3=b[3];
-  b[0]=b[7]; b[1]=b[7]; b[2]=b[5]; b[3]=b[4];
-  b[7]=t0;   b[6]=t1;   b[5]=t2;   b[4]=t3;
+  b[0]=b[7]; 
+  b[1]=b[6]; 
+  b[2]=b[5]; 
+  b[3]=b[4];
+  b[4]=t3;
+  b[5]=t2;   
+  b[6]=t1;   
+  b[7]=t0;   
 }
 #else
 # define flt_swap16(d)
@@ -810,12 +838,15 @@ FILE* flt_fopen(const char* filename, flt* of);
 char* flt_path_base(const char* filaname);
 char* flt_path_basefile(const char* filename);
 int flt_path_endsok(const char* filename);
-flt_node* flt_node_create(flt* of, int nodetype, const char* name);
+flt_node* flt_node_create(fltu32 hieflags, int nodetype, const char* name);
 void flt_release_node(flt_node* n);
 void flt_resolve_all_extref(flt* of);
 #ifdef FLT_UNIQUE_FACES
 void flt_face_destroy_name(char* key, void* faceptr, void* userdata);
 #endif
+void flt_vertex_write(flt* of, fltu32 vtxoffset);
+fltu32 flt_compute_vertex_size(fltu32 palopts);
+
 
 FLT_RECORD_READER(flt_reader_header);                 // FLT_OP_HEADER
 FLT_RECORD_READER(flt_reader_pushlv);                 // FLT_OP_PUSH_LEVEL
@@ -824,12 +855,16 @@ FLT_RECORD_READER(flt_reader_poplv);                  // FLT_OP_POP_LEVEL
 FLT_RECORD_READER(flt_reader_group);                  // FLT_OP_GROUP
 FLT_RECORD_READER(flt_reader_lod);                    // FLT_OP_LOD
 FLT_RECORD_READER(flt_reader_mesh);                   // FLT_OP_MESH
+FLT_RECORD_READER(flt_reader_local_vertex_pool);      // FLT_OP_LOCAL_VERTEX_POOL
+FLT_RECORD_READER(flt_reader_mesh_primitive);         // FLT_OP_MESH_PRIMITIVE
 FLT_RECORD_READER(flt_reader_object);                 // FLT_OP_OBJECT
 FLT_RECORD_READER(flt_reader_pal_tex);                // FLT_OP_PAL_TEXTURE
 FLT_RECORD_READER(flt_reader_longid);                 // FLT_OP_LONGID
 FLT_RECORD_READER(flt_reader_extref);                 // FLT_OP_EXTREF
 FLT_RECORD_READER(flt_reader_pal_vertex);             // FLT_OP_PAL_VERTEX
 FLT_RECORD_READER(flt_reader_vertex_list);            // FLT_OP_VERTEX_LIST
+FLT_RECORD_READER(flt_reader_switch);                 // FLT_OP_SWITCH
+FLT_RECORD_READER(flt_reader_continuation);           // FLT_OP_CONTINUATION
 static float flt_zerovec[4]={0};
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -899,14 +934,21 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   // configuring reading
   readtab[FLT_OP_HEADER] = flt_reader_header;         // always read header
   readtab[FLT_OP_PAL_VERTEX] = flt_reader_pal_vertex; // always read vertex palette header for skipping at least
-  if ( opts->palflags & FLT_OPT_PAL_TEXTURE ) { readtab[FLT_OP_PAL_TEXTURE] = flt_reader_pal_tex; use_pal=FLT_TRUE; }  
-  if ( opts->hieflags & FLT_OPT_HIE_EXTREF )  { readtab[FLT_OP_EXTREF] = flt_reader_extref; use_node=FLT_TRUE; }
-  if ( opts->hieflags & FLT_OPT_HIE_OBJECT )  { readtab[FLT_OP_OBJECT] = flt_reader_object; use_node=FLT_TRUE; }
-  if ( opts->hieflags & FLT_OPT_HIE_GROUP )   { readtab[FLT_OP_GROUP] = flt_reader_group; use_node=FLT_TRUE; }
-  if ( opts->hieflags & FLT_OPT_HIE_LOD )     { readtab[FLT_OP_LOD] = flt_reader_lod; use_node=FLT_TRUE; }
-  if ( opts->hieflags & FLT_OPT_HIE_MESH )    { readtab[FLT_OP_MESH] = flt_reader_mesh; use_node=FLT_TRUE; }
-  if ( opts->hieflags & FLT_OPT_HIE_FACE )    { readtab[FLT_OP_FACE] = flt_reader_face; readtab[FLT_OP_VERTEX_LIST]= flt_reader_vertex_list; use_node=FLT_TRUE;}  
-  
+  readtab[FLT_OP_CONTINUATION] = flt_reader_continuation; // always prepared to continue
+  if ( opts->pflags & FLT_OPT_PAL_TEXTURE ) { readtab[FLT_OP_PAL_TEXTURE] = flt_reader_pal_tex; use_pal=FLT_TRUE; }  
+  if ( opts->hflags & FLT_OPT_HIE_EXTREF )  { readtab[FLT_OP_EXTREF] = flt_reader_extref; use_node=FLT_TRUE; }
+  if ( opts->hflags & FLT_OPT_HIE_OBJECT )  { readtab[FLT_OP_OBJECT] = flt_reader_object; use_node=FLT_TRUE; }
+  if ( opts->hflags & FLT_OPT_HIE_GROUP )   { readtab[FLT_OP_GROUP] = flt_reader_group; use_node=FLT_TRUE; }
+  if ( opts->hflags & FLT_OPT_HIE_LOD )     { readtab[FLT_OP_LOD] = flt_reader_lod; use_node=FLT_TRUE; }
+  if ( opts->hflags & FLT_OPT_HIE_FACE )    { readtab[FLT_OP_FACE] = flt_reader_face; readtab[FLT_OP_VERTEX_LIST]= flt_reader_vertex_list; use_node=FLT_TRUE;}  
+  if (opts->hflags & FLT_OPT_HIE_SWITCH)    { readtab[FLT_OP_SWITCH] = flt_reader_switch; use_node = FLT_TRUE; }
+  if ( opts->hflags & FLT_OPT_HIE_MESH )    
+  { 
+    readtab[FLT_OP_MESH] = flt_reader_mesh; 
+    readtab[FLT_OP_LOCAL_VERTEX_POOL] = flt_reader_local_vertex_pool;
+    readtab[FLT_OP_MESH_PRIMITIVE] = flt_reader_mesh_primitive;
+    use_node=FLT_TRUE; 
+  }  
   if (use_pal)
   {
     of->pal = (flt_palettes*)flt_calloc(1,sizeof(flt_palettes));
@@ -915,7 +957,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
 
   if (use_node)
   {
-    if (!(ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES))
+    if (!(ctx->opts->hflags & FLT_OPT_HIE_NO_NAMES))
       readtab[FLT_OP_LONGID] = flt_reader_longid;
     readtab[FLT_OP_PUSHLEVEL] = flt_reader_pushlv;
     readtab[FLT_OP_POPLEVEL] = flt_reader_poplv;
@@ -923,7 +965,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
     // hierarchy (root should be always)
     of->hie = (flt_hie*)flt_calloc(1,sizeof(flt_hie));
     flt_mem_check2(of->hie, of);
-    of->hie->node_root = flt_node_create(of, FLT_NODE_BASE, "root");
+    of->hie->node_root = flt_node_create(of->ctx->opts->hflags, FLT_NODE_BASE, "root");
     flt_mem_check2(of->hie->node_root, of);
     flt_stack_pushn(ctx->stack, of->hie->node_root);
   }
@@ -944,7 +986,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
     else if ( skipbytes > 0 )   fseek(ctx->f,skipbytes,SEEK_CUR); 
   }
 
-  if (opts->hieflags & FLT_OPT_HIE_EXTREF_RESOLVE && of->hie)
+  if (opts->hflags & FLT_OPT_HIE_EXTREF_RESOLVE && of->hie)
     flt_resolve_all_extref(of);  
 
   flt_stack_popn(ctx->stack); // root
@@ -1041,8 +1083,9 @@ FLT_RECORD_READER(flt_reader_header)
   flt_context* ctx=of->ctx;
   int leftbytes=oh->length-sizeof(flt_op);
   flti32 format_rev=0;
+  int i;
 
-  if ( ctx->opts->hieflags & FLT_OPT_HIE_HEADER ) 
+  if ( ctx->opts->hflags & FLT_OPT_HIE_HEADER ) 
   {
     // if storing header, read it entirely
     of->header = (flt_header*)flt_malloc(sizeof(flt_header));
@@ -1050,6 +1093,8 @@ FLT_RECORD_READER(flt_reader_header)
     leftbytes -= (int)fread(of->header, 1, flt_min(leftbytes,sizeof(flt_header)), ctx->f);  
     flt_swap_desc(of->header,desc); // endianess
     format_rev = of->header->format_rev;
+    // remove dtime line breaks
+    for (i=0;i<32;++i) if (of->header->dtime[i]=='\n' || of->header->dtime[i]=='\r') of->header->dtime[i]=' ';
   }
   else
   {
@@ -1138,7 +1183,7 @@ FLT_RECORD_READER(flt_reader_extref)
   leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,210),ctx->f);
   {
     // creates
-    newextref = (flt_node_extref*)flt_node_create(of, FLT_NODE_EXTREF, ctx->tmpbuff);
+    newextref = (flt_node_extref*)flt_node_create(of->ctx->opts->hflags, FLT_NODE_EXTREF, ctx->tmpbuff);
     flt_mem_check(newextref, of->errcode);    
     
     // set values
@@ -1169,7 +1214,7 @@ FLT_RECORD_READER(flt_reader_object)
   // read and create node
   leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,24),ctx->f);
   {
-    newobj = (flt_node_object*)flt_node_create(of, FLT_NODE_OBJECT, ctx->tmpbuff);
+    newobj = (flt_node_object*)flt_node_create(of->ctx->opts->hflags, FLT_NODE_OBJECT, ctx->tmpbuff);
     flt_mem_check(newobj, of->errcode);
 
     // set values
@@ -1197,7 +1242,7 @@ FLT_RECORD_READER(flt_reader_group)
 
   leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,40),ctx->f);
   {
-    group = (flt_node_group*)flt_node_create(of,FLT_NODE_GROUP,ctx->tmpbuff);
+    group = (flt_node_group*)flt_node_create(of->ctx->opts->hflags,FLT_NODE_GROUP,ctx->tmpbuff);
     flt_mem_check(group,of->errcode);
 
     flt_getswapu16(group->priority,8);
@@ -1210,6 +1255,7 @@ FLT_RECORD_READER(flt_reader_group)
   }
   return leftbytes;
 }
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_lod)
@@ -1223,30 +1269,92 @@ FLT_RECORD_READER(flt_reader_lod)
 
   leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,76),ctx->f);
   {
-    lod = (flt_node_lod*)flt_node_create(of,FLT_NODE_LOD,ctx->tmpbuff);
+    lod = (flt_node_lod*)flt_node_create(of->ctx->opts->hflags,FLT_NODE_LOD,ctx->tmpbuff);
     flt_mem_check(lod,of->errcode);
 
     flt_getswapdbl(lod->switch_in,12);
     flt_getswapdbl(lod->switch_out,20);    
     flt_getswapu32(lod->flags,32);
     dbl+=2; tgdbl=lod->cnt_coords;
-    for (i=0;i<5;++i,++dbl){ flt_swap32(dbl); tgdbl[i]=*dbl; }
+    for (i=0;i<5;++i,++dbl){ flt_swap64(dbl); tgdbl[i]=*dbl; }
     
     flt_node_add(of,(flt_node*)lod);
   }
   return leftbytes;
 }
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_mesh)
 {
   flt_context* ctx=of->ctx;
   int leftbytes = oh->length-sizeof(flt_op);
-  flt_node* n= (flt_node*)flt_calloc(1,sizeof(flt_node));
+  fltu32* u32; flti32* i32; fltu16* u16; flti16* i16;
+  flt_face* attr;
 
   leftbytes -= (int)fread(ctx->tmpbuff,1,leftbytes,ctx->f);
+  flt_node_mesh* mesh = (flt_node_mesh*)flt_node_create(ctx->opts->hflags, FLT_NODE_MESH, ctx->tmpbuff);
+  flt_mem_check(mesh,of->errcode);
+  attr=&mesh->attribs;
 
-  flt_free(n);
+  // same as face record but different offsets
+  attr->billb = (fltu8)*(ctx->tmpbuff+25);
+  flt_getswapi16(attr->texbase_pat, 28);
+  flt_getswapi16(attr->texdetail_pat, 26);
+  flt_getswapi16(attr->mat_pat, 30);
+  flt_getswapi32(attr->flags,44);
+  flt_getswapu32(attr->abgr,52);
+  flt_getswapu16(attr->shader_ndx,78);
+#ifndef FLT_LEAN_FACES  
+  flt_getswapi32(attr->ir_color,12);
+  flt_getswapi32(attr->ir_mat,36);
+  flt_getswapi16(attr->smc_id,32);
+  flt_getswapi16(attr->feat_id,34);
+  flt_getswapi16(attr->transp, 40);
+  flt_getswapu16(attr->cname_ndx,20);
+  flt_getswapu16(attr->cnamealt_ndx,22);
+  flt_getswapu16(attr->texmapp_ndx,64);
+  attr->draw_type = *(fltu8*)(ctx->tmpbuff+18);
+  attr->light_mode = *(fltu8*)(ctx->tmpbuff+48);
+  attr->lod_gen = *(fltu8*)(ctx->tmpbuff+42);
+  attr->linestyle_ndx = *(fltu8*)(ctx->tmpbuff+43);
+#endif
+
+  flt_node_add(of, (flt_node*)mesh);
+
+  return leftbytes;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+FLT_RECORD_READER(flt_reader_local_vertex_pool)
+{
+  flt_context* ctx=of->ctx;
+  int leftbytes = oh->length-sizeof(flt_op);
+  fltu32* u32; flti32* i32; fltu16* u16; flti16* i16;
+
+  FLT_ASSERT(leftbytes != 0xffff); // there'll be a continuation record, do something!
+  flt_node_mesh* mesh = (flt_node_mesh*)flt_stack_topn_not_null(ctx->stack);
+  FLT_ASSERT(mesh->base.type==FLT_NODE_MESH);
+  if ( mesh->base.type==FLT_NODE_MESH )
+  {
+    mesh->vb = (flt_mesh_vb*)flt_malloc(sizeof(flt_mesh_vb));
+    flt_mem_check(mesh->vb,of->errcode);
+    leftbytes -= (int)fread(ctx->tmpbuff,1,sizeof(fltu32)*2,ctx->f);
+    flt_getswapu32(mesh->vb->count,0);
+    flt_getswapu32(mesh->vb->semantic,4);
+  }
+
+  return leftbytes;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+FLT_RECORD_READER(flt_reader_mesh_primitive)
+{
+  flt_context* ctx=of->ctx;
+  int leftbytes = oh->length-sizeof(flt_op);
+  fltu32* u32; flti32* i32; fltu16* u16; flti16* i16;
 
   return leftbytes;
 }
@@ -1272,32 +1380,6 @@ FLT_RECORD_READER(flt_reader_longid)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-fltu32 flt_compute_vertex_size(fltu32 palopts)
-{
-  fltu32 size = 0;
-
-  if (palopts & FLT_OPT_PAL_VTX_POSITION)
-  {
-    if (palopts & FLT_OPT_PAL_VTX_POSITION_SINGLE)
-      size += sizeof(float) * 3;
-    else
-      size += sizeof(double) * 3;
-  }
-
-  if (palopts & FLT_OPT_PAL_VTX_NORMAL)
-    size += sizeof(float) * 3;
-
-  if (palopts & FLT_OPT_PAL_VTX_UV)
-    size += sizeof(float) * 2;
-
-  if (palopts & FLT_OPT_PAL_VTX_COLOR)
-    size += sizeof(fltu32);
-
-  return size;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_pal_vertex)
 {
   flt_context* ctx=of->ctx;
@@ -1313,14 +1395,14 @@ FLT_RECORD_READER(flt_reader_pal_vertex)
   leftbytes = palbytes; // size of palette minus header and marker
   
   // read vertices from palette?
-  if ( palbytes && opts->palflags & FLT_OPT_PAL_VERTEX )
+  if ( palbytes && opts->pflags & FLT_OPT_PAL_VERTEX )
   {
     // saves the whole vertex
     of->pal->vtx_buff = (fltu8*)flt_malloc( palbytes ); 
     flt_mem_check(of->pal->vtx_buff, of->errcode);
     leftbytes -= (int)fread(of->pal->vtx_buff, 1, palbytes, ctx->f);
 
-    vsize = flt_compute_vertex_size(opts->palflags);
+    vsize = flt_compute_vertex_size(opts->pflags);
     if (vsize)
     {
       palbytes /= 40; // upper bound of vertices
@@ -1341,7 +1423,7 @@ FLT_RECORD_READER(flt_reader_face)
   flt_context* ctx=of->ctx;
   flt_node *parent, *sibling;
   int leftbytes = oh->length-sizeof(flt_op);
-  flti32* i32; flti16* i16; fltu16* u16; 
+  flti32* i32; flti16* i16; fltu16* u16; fltu32* u32;
 #ifdef FLT_UNIQUE_FACES
   fltu32 facehash;
   fltu32 hashentry;
@@ -1355,13 +1437,13 @@ FLT_RECORD_READER(flt_reader_face)
 
   leftbytes -= (int)fread(ctx->tmpbuff,1,flt_min(leftbytes,76),ctx->f);
 
-  flt_getswapi16(face->abgr,52);
+  face->billb = (fltu8)*(ctx->tmpbuff+21);
   flt_getswapi16(face->texbase_pat, 22);
   flt_getswapi16(face->texdetail_pat, 24);
   flt_getswapi16(face->mat_pat, 26);
-  flt_getswapi16(face->shader_ndx,74);
   flt_getswapi32(face->flags,40);
-  face->billb = (fltu8)*(ctx->tmpbuff+21);
+  flt_getswapu32(face->abgr,52);
+  flt_getswapu16(face->shader_ndx,74);
 #ifndef FLT_LEAN_FACES  
   flt_getswapi32(face->ir_color,8);
   flt_getswapi32(face->ir_mat,32);
@@ -1391,7 +1473,7 @@ FLT_RECORD_READER(flt_reader_face)
     flt_mem_check(face,of->errcode);    
     *face = tmpf;
 #ifndef FLT_LEAN_FACES
-    if ( !(ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES) && *ctx->tmpbuff )
+    if ( !(ctx->opts->hflags & FLT_OPT_HIE_NO_NAMES) && *ctx->tmpbuff )
       face->name = flt_strdup(ctx->tmpbuff);
 #endif
     flt_dict_insert(ctx->dictfaces, (const char*)face, face, FLT_FACESIZE_HASH, facehash, &hashentry);
@@ -1401,7 +1483,7 @@ FLT_RECORD_READER(flt_reader_face)
   flt_stack_push32(ctx->stack, hashentry);
 #else
   // creating node for every face
-  nodeface = (flt_node_face*)flt_node_create(of, FLT_NODE_FACE,ctx->tmpbuff);
+  nodeface = (flt_node_face*)flt_node_create(of->ctx->opts->hflags, FLT_NODE_FACE,ctx->tmpbuff);
   flt_mem_check(nodeface,of->errcode);
   // whole face info in node
   nodeface->face = tmpf;
@@ -1411,99 +1493,6 @@ FLT_RECORD_READER(flt_reader_face)
   
 
   return leftbytes;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////
-void flt_vertex_write(flt* of, fltu32 vtxoffset)
-{
-  const fltu32 vsize = flt_compute_vertex_size(of->ctx->opts->palflags);
-  const fltu8* invtx = of->pal->vtx_buff + vtxoffset;
-  fltu16 op = *(fltu16*)(invtx);
-  fltu8* outvtx = of->pal->vtx_array + vsize*of->pal->vtx_count;
-  const fltu32 flags = of->ctx->opts->palflags;  
-  double *xyz = FLT_NULL;
-  float *normal=FLT_NULL;
-  float *uv = FLT_NULL;
-  fltu32 *abgr = FLT_NULL;
-  double *outd;
-  float *outf;
-  fltu32 *outc;
-  fltu32 offs;
-
-  flt_swap16(&op);
-  // getting input data
-  switch (op)
-  {
-  case FLT_OP_VERTEX_COLOR:
-    xyz = (double*)(invtx + 8);
-    abgr = (fltu32*)(invtx + 32);
-    break;
-  case FLT_OP_VERTEX_COLOR_NORMAL:
-    xyz = (double*)(invtx + 8);
-    normal = (float*)(invtx + 32);
-    abgr = (fltu32*)(invtx + 44);
-    break;
-  case FLT_OP_VERTEX_COLOR_UV:
-    xyz = (double*)(invtx + 8);
-    uv = (float*)(invtx + 32);
-    abgr = (fltu32*)(invtx + 40);
-    break;
-  case FLT_OP_VERTEX_COLOR_NORMAL_UV:
-    xyz = (double*)(invtx + 8);
-    normal = (float*)(invtx + 32);
-    uv = (float*)(invtx + 44);
-    abgr = (fltu32*)(invtx + 52);
-    break;
-  }
-
-  // swaping byte ordering
-  flt_swap64(xyz + 0); flt_swap64(xyz + 1); flt_swap64(xyz + 2);
-  flt_swap32(abgr);
-  if (normal) { flt_swap32(normal); flt_swap32(normal + 1); }else { normal = flt_zerovec; }
-  if (uv) { flt_swap32(uv); flt_swap32(uv + 1); }else { uv = flt_zerovec; }
-
-  // outputting data
-  offs = 0;
-  if (flags & FLT_OPT_PAL_VTX_POSITION)
-  {
-    if (flags & FLT_OPT_PAL_VTX_POSITION_SINGLE)
-    {
-      outf = (float*)(outvtx + offs);
-      outf[0] = (float)xyz[0]; outf[1] = (float)xyz[1]; outf[2] = (float)xyz[2];
-      offs += sizeof(float) * 3;
-    }
-    else
-    {
-      outd = (double*)(outvtx + offs);
-      outd[0] = xyz[0]; outd[1] = xyz[1]; outd[2] = xyz[2];
-      offs += sizeof(double) * 3;
-    }
-  }
-
-  if (flags & FLT_OPT_PAL_VTX_NORMAL)
-  {
-    outf = (float*)(outvtx + offs);
-    outf[0] = normal[0]; outf[1] = normal[1]; outf[2] = normal[2];
-    offs += sizeof(float) * 3;
-  }
-
-  if (flags & FLT_OPT_PAL_VTX_UV)
-  {
-    outf = (float*)(outvtx + offs);
-    outf[0] = uv[0]; outf[1] = uv[1];
-    offs += sizeof(float) * 2;
-  }
-
-  if (flags & FLT_OPT_PAL_VTX_COLOR)
-  {
-    outc = (fltu32*)(outvtx + offs);
-    *outc = *abgr;
-  }
-
-  *(fltu16*)(invtx) = 0;
-  *(fltu32*)(invtx + sizeof(fltu16)) = of->pal->vtx_count;
-  ++of->pal->vtx_count;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1604,7 +1593,7 @@ FLT_RECORD_READER(flt_reader_vertex_list)
   // using normal vertex list node, create the node, create the indices array and add the node
   if ( n_inds )
   {
-    vlistnode = (flt_node_vlist*)flt_node_create(of, FLT_NODE_VLIST, FLT_NULL);
+    vlistnode = (flt_node_vlist*)flt_node_create(of->ctx->opts->hflags, FLT_NODE_VLIST, FLT_NULL);
     vlistnode->count = n_inds;
     vlistnode->indices = (fltu32*)flt_malloc(sizeof(fltu32)*n_inds);
     flt_mem_check(vlistnode->indices,of->errcode);
@@ -1618,6 +1607,179 @@ FLT_RECORD_READER(flt_reader_vertex_list)
   return leftbytes;
 }
 #pragma warning(default:4101 4189)
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+FLT_RECORD_READER(flt_reader_switch)
+{
+  flt_context* ctx = of->ctx;
+  flt_node_switch* switchnode;
+  int leftbytes = oh->length - sizeof(flt_op);
+  fltu32* u32;
+  fltu32 i,end;
+
+  leftbytes -= (int)fread(ctx->tmpbuff,1,leftbytes,ctx->f);  
+  switchnode = (flt_node_switch*)flt_node_create(ctx->opts->hflags, FLT_NODE_SWITCH, ctx->tmpbuff);
+  flt_mem_check(switchnode,of->errcode);
+
+  flt_getswapu32(switchnode->cur_mask,12);
+  flt_getswapu32(switchnode->mask_count,16);
+  flt_getswapu32(switchnode->wpm,20);
+    
+  end = switchnode->mask_count * switchnode->wpm;
+  switchnode->maskwords = (fltu32*)flt_calloc(1,sizeof(fltu32)*end);
+  flt_mem_check(switchnode->maskwords,of->errcode);
+  u32 = (fltu32*)(ctx->tmpbuff+24);
+  for (i=0;i<end;++i,++u32)
+  {
+    flt_swap32(u32);
+    switchnode->maskwords[i]=*u32;
+  }
+  flt_node_add(of,(flt_node*)switchnode);
+
+  return leftbytes;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+FLT_RECORD_READER(flt_reader_continuation)
+{
+  flt_context* ctx=of->ctx;
+  int leftbytes = oh->length-sizeof(flt_op);
+  
+  fltu8* contdata = (fltu8*)flt_malloc(leftbytes);
+  leftbytes -= (int)fread(contdata,1,leftbytes,ctx->f);
+
+  FLT_BREAK_ALWAYS; // !! NOT IMPLEMENTED YET !! 
+  
+  // it will depend on the last record
+  switch ( ctx->op_last )
+  {
+  case FLT_OP_LOCAL_VERTEX_POOL: break;
+  case FLT_OP_MESH_PRIMITIVE: break;
+  case FLT_OP_VERTEX_LIST: break;
+  }
+  
+  flt_free(contdata);
+  return leftbytes;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+fltu32 flt_compute_vertex_size(fltu32 palopts)
+{
+  fltu32 size = 0;
+
+  if (palopts & FLT_OPT_PAL_VTX_POSITION)
+  {
+    if (palopts & FLT_OPT_PAL_VTX_POSITION_SINGLE)
+      size += sizeof(float) * 3;
+    else
+      size += sizeof(double) * 3;
+  }
+
+  if (palopts & FLT_OPT_PAL_VTX_NORMAL) size += sizeof(float) * 3;
+  if (palopts & FLT_OPT_PAL_VTX_UV)     size += sizeof(float) * 2;
+  if (palopts & FLT_OPT_PAL_VTX_COLOR)  size += sizeof(fltu32);
+
+  return size;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_vertex_write(flt* of, fltu32 vtxoffset)
+{
+  const fltu32 vsize = flt_compute_vertex_size(of->ctx->opts->pflags);
+  const fltu8* invtx = of->pal->vtx_buff + vtxoffset;
+  fltu16 op = *(fltu16*)(invtx);
+  fltu8* outvtx = of->pal->vtx_array + vsize*of->pal->vtx_count;
+  const fltu32 flags = of->ctx->opts->pflags;
+  double *xyz = FLT_NULL;
+  float *normal = FLT_NULL;
+  float *uv = FLT_NULL;
+  fltu32 *abgr = FLT_NULL;
+  double *outd;
+  float *outf;
+  fltu32 *outc;
+  fltu32 offs;
+
+  flt_swap16(&op);
+  // getting input data
+  switch (op)
+  {
+  case FLT_OP_VERTEX_COLOR:
+    xyz = (double*)(invtx + 8);
+    abgr = (fltu32*)(invtx + 32);
+    break;
+  case FLT_OP_VERTEX_COLOR_NORMAL:
+    xyz = (double*)(invtx + 8);
+    normal = (float*)(invtx + 32);
+    abgr = (fltu32*)(invtx + 44);
+    break;
+  case FLT_OP_VERTEX_COLOR_UV:
+    xyz = (double*)(invtx + 8);
+    uv = (float*)(invtx + 32);
+    abgr = (fltu32*)(invtx + 40);
+    break;
+  case FLT_OP_VERTEX_COLOR_NORMAL_UV:
+    xyz = (double*)(invtx + 8);
+    normal = (float*)(invtx + 32);
+    uv = (float*)(invtx + 44);
+    abgr = (fltu32*)(invtx + 52);
+    break;
+  }
+
+  // swaping byte ordering
+  flt_swap64(xyz + 0); flt_swap64(xyz + 1); flt_swap64(xyz + 2);
+  flt_swap32(abgr);
+  if (normal) { flt_swap32(normal); flt_swap32(normal + 1); }
+  else { normal = flt_zerovec; }
+  if (uv) { flt_swap32(uv); flt_swap32(uv + 1); }
+  else { uv = flt_zerovec; }
+
+  // outputting data
+  offs = 0;
+  if (flags & FLT_OPT_PAL_VTX_POSITION)
+  {
+    if (flags & FLT_OPT_PAL_VTX_POSITION_SINGLE)
+    {
+      outf = (float*)(outvtx + offs);
+      outf[0] = (float)xyz[0]; outf[1] = (float)xyz[1]; outf[2] = (float)xyz[2];
+      offs += sizeof(float) * 3;
+    }
+    else
+    {
+      outd = (double*)(outvtx + offs);
+      outd[0] = xyz[0]; outd[1] = xyz[1]; outd[2] = xyz[2];
+      offs += sizeof(double) * 3;
+    }
+  }
+
+  if (flags & FLT_OPT_PAL_VTX_NORMAL)
+  {
+    outf = (float*)(outvtx + offs);
+    outf[0] = normal[0]; outf[1] = normal[1]; outf[2] = normal[2];
+    offs += sizeof(float) * 3;
+  }
+
+  if (flags & FLT_OPT_PAL_VTX_UV)
+  {
+    outf = (float*)(outvtx + offs);
+    outf[0] = uv[0]; outf[1] = uv[1];
+    offs += sizeof(float) * 2;
+  }
+
+  if (flags & FLT_OPT_PAL_VTX_COLOR)
+  {
+    outc = (fltu32*)(outvtx + offs);
+    *outc = *abgr;
+  }
+
+  *(fltu16*)(invtx) = 0;
+  *(fltu32*)(invtx + sizeof(fltu16)) = of->pal->vtx_count;
+  ++of->pal->vtx_count;
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1688,6 +1850,9 @@ void flt_release_node(flt_node* n)
 {
   flt_node *next, *cur;
   flt_node_extref* eref;
+  flt_node_switch* swi;
+  flt_node_mesh* mesh;
+
 #if !defined(FLT_UNIQUE_FACES) && !defined(FLT_LEAN_FACES)
   flt_node_face* nodeface;
 #endif
@@ -1725,6 +1890,20 @@ void flt_release_node(flt_node* n)
         flt_free(eref->of);        
       }
       eref=FLT_NULL;
+    }break;
+    case FLT_NODE_MESH:
+    {
+      mesh = (flt_node_mesh*)n;
+      if ( mesh->vb )
+      {
+        flt_safefree(mesh->vb->vertices);
+        flt_safefree(mesh->vb);
+      }
+    }break;
+    case FLT_NODE_SWITCH:
+    {
+      swi = (flt_node_switch*)n;
+      flt_safefree(swi->maskwords);
     }break;
 #if !defined(FLT_UNIQUE_FACES) && !defined(FLT_LEAN_FACES) // if there are node of large faces, release name
     case FLT_NODE_FACE:
@@ -1820,7 +1999,7 @@ void flt_node_add(flt* of, flt_node* node)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-flt_node* flt_node_create(flt* of, int nodetype, const char* name)
+flt_node* flt_node_create(fltu32 hieflags, int nodetype, const char* name)
 {
   flt_node* n=0;
   static int nodefacesize = 
@@ -1837,7 +2016,7 @@ flt_node* flt_node_create(flt* of, int nodetype, const char* name)
   if (n)
   {
     n->type = nodetype;
-    if ( (!(of->ctx->opts->hieflags & FLT_OPT_HIE_NO_NAMES) && name && *name) || nodetype==FLT_NODE_EXTREF)
+    if ( (!(hieflags & FLT_OPT_HIE_NO_NAMES) && name && *name) || nodetype==FLT_NODE_EXTREF)
       n->name = flt_strdup(name);
   }
   return n;
@@ -2050,7 +2229,7 @@ const char* flt_get_db_origin_name(fltu32 db_orig)
   default: return itoa(db_orig,tmp,10);
   }
 #else
-  return itoa(proj,tmp,10);
+  return itoa(db_orig,tmp,10);
 #endif
 }
 
@@ -2060,7 +2239,7 @@ const char* flt_get_vcoords_units_name(fltu8 vcu)
 {
   static char tmp[16];
 #ifndef FLT_NO_OPNAMES
-  const char* names[]={"Meters", "Kilometers", "", "", "Feet", "Inches", "", "", "Nautical miles"};
+  static const char* names[]={"Meters", "Kilometers", "", "", "Feet", "Inches", "", "", "Nautical miles"};
   return vcu<9?names[vcu]:itoa(vcu,tmp,10);
 #else
   return itoa(vcu,tmp,10);
@@ -2074,7 +2253,7 @@ const char* flt_get_earth_ellip_name(int eem)
   static char tmp[16];
 #ifndef FLT_NO_OPNAMES
   if ( eem==-1 ) return "User Defined";
-  const char* names[]={"WGS 1984", "WGS 1972", "Bessel", "Clarke 1866", "NAD1927"};
+  static const char* names[]={"WGS 1984", "WGS 1972", "Bessel", "Clarke 1866", "NAD1927"};
   return eem>=0 && eem<5?names[eem]:itoa(eem,tmp,10);
 #else
   return itoa(eem,tmp,10);
@@ -2087,7 +2266,7 @@ const char* flt_get_face_drawtype(fltu16 drawtype)
 {
   static char tmp[16];
 #ifndef FLT_NO_OPNAMES
-  const char* names[]={"Draw Solid Culling", "Draw Solid DSided", "Draw Wireframe Close", 
+  static const char* names[]={"Draw Solid Culling", "Draw Solid DSided", "Draw Wireframe Close", 
     "Draw Wireframe", "Sorround WF AltColor","", "", "",  "Omni light", "Unidir light", "Bidir light"};
   return drawtype<11?names[drawtype]:itoa(drawtype,tmp,10);
 #else
@@ -2101,7 +2280,7 @@ const char* flt_get_face_lightmode(fltu16 lm)
 {
   static char tmp[16];
 #ifndef FLT_NO_OPNAMES
-  const char* names[]={"Flat", "Gouraud", "Lit", "Lit-Gouraud"};
+  static const char* names[]={"Flat", "Gouraud", "Lit", "Lit-Gouraud"};
   return lm<4?names[lm]:itoa(lm,tmp,10);
 #else
   return itoa(lm,tmp,10);
@@ -2797,6 +2976,251 @@ return opcode==3 || (opcode>=6 && opcode<=9) || (opcode>=12 && opcode<=13)
 }
 
 */
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+#ifdef FLT_WRITER
+int flt_write_8(struct flt* of, void* _u8)
+{
+  fltu8 u8 = *(fltu8*)(_u8);  
+  return (int)fwrite(&u8,1,sizeof(fltu8),of->ctx->f);
+}
+
+int flt_write_16(struct flt* of, void* _u16)
+{
+  fltu16 u16 = *(fltu16*)(_u16);
+  flt_swap16(&u16);
+  return (int)fwrite(&u16,1,sizeof(fltu16),of->ctx->f);
+}
+
+int flt_write_32(struct flt* of, void* _u32)
+{
+  fltu32 u32= *(fltu32*)(_u32);
+  flt_swap32(&u32);
+  return (int)fwrite(&u32,1,sizeof(fltu32),of->ctx->f);
+}
+
+int flt_write_64(struct flt* of, void* _u64)
+{
+  fltu64 u64= *(fltu64*)(_u64);
+  flt_swap64(&u64);
+  return (int)fwrite(&u64,1,sizeof(fltu64),of->ctx->f);
+}
+
+int flt_write_char(struct flt* of, const char* _c, int len)
+{
+  return (int)fwrite(_c,1,len,of->ctx->f);
+}
+
+int flt_write_op(struct flt* of, fltu16 op, fltu16 len)
+{
+  int r=0;
+  flt_swap16(&op); flt_swap16(&len);
+  r+=(int)fwrite(&op,1,sizeof(fltu16),of->ctx->f);
+  r+=(int)fwrite(&len,1,sizeof(fltu16),of->ctx->f);
+  return r;
+}
+
+void flt_write_header(struct flt* of)
+{
+  int i;
+  fltu32 u32=0;
+  flt_header* h =of->header;
+  flti32 written=0;
+
+  written = flt_write_op(of,FLT_OP_HEADER,324);
+  written+=flt_write_char(of,h->ascii,8);
+  written+=flt_write_32(of,&h->format_rev);
+  written+=flt_write_32(of,&h->edit_rev);
+  written+=flt_write_char(of,h->dtime,32);
+  written+=flt_write_16(of,&h->n_group_nid);
+  written+=flt_write_16(of,&h->n_lod_nid);
+  written+=flt_write_16(of,&h->n_obj_nid);
+  written+=flt_write_16(of,&h->n_face_nid);
+  written+=flt_write_16(of,&h->unit_mult);
+  written+=flt_write_8(of,&h->v_coords_units);
+  written+=flt_write_8(of,&h->texwhite_new_faces);
+  written+=flt_write_32(of,&h->flags);
+  for (i=0; i<6; ++i) written+=flt_write_32(of,&u32);
+  written+=flt_write_32(of,&h->proj_type);
+  for (i=0; i<7; ++i) written+=flt_write_32(of,&u32);
+  written+=flt_write_16(of,&h->n_dof_nid);
+  written+=flt_write_16(of,&h->v_storage_type);
+  written+=flt_write_32(of,&h->db_orig);
+  written+=flt_write_64(of,&h->sw_db_x);
+  written+=flt_write_64(of,&h->sw_db_y);
+  written+=flt_write_64(of,&h->d_db_x);
+  written+=flt_write_64(of,&h->d_db_y);
+  written+=flt_write_16(of,&h->n_sound_nid);
+  written+=flt_write_16(of,&h->n_path_nid);
+  for (i=0; i<2; ++i) written+=flt_write_32(of,&u32);
+  written+=flt_write_16(of,&h->n_clip_nid);
+  written+=flt_write_16(of,&h->n_text_nid);
+  written+=flt_write_16(of,&h->n_bsp_nid);
+  written+=flt_write_16(of,&h->n_switch_nid);
+  written+=flt_write_32(of,&u32);
+  written+=flt_write_64(of,&h->sw_corner_lat);
+  written+=flt_write_64(of,&h->sw_corner_lon);
+  written+=flt_write_64(of,&h->ne_corner_lat);
+  written+=flt_write_64(of,&h->ne_corner_lon);
+  written+=flt_write_64(of,&h->orig_lat);
+  written+=flt_write_64(of,&h->orig_lon);
+  written+=flt_write_64(of,&h->lbt_upp_lat);
+  written+=flt_write_64(of,&h->lbt_low_lat);
+  written+=flt_write_16(of,&h->n_lightsrc_nid);
+  written+=flt_write_16(of,&h->n_lightpnt_nid);
+  written+=flt_write_16(of,&h->n_road_nid);
+  written+=flt_write_16(of,&h->n_cat_nid);
+  for (i=0; i<2; ++i) written+=flt_write_32(of,&u32);
+  written+=flt_write_32(of,&h->earth_ellip_model);
+  written+=flt_write_16(of,&h->n_adapt_nid);
+  written+=flt_write_16(of,&h->n_curve_nid);
+  written+=flt_write_16(of,&h->utm_zone);
+  written+=flt_write_char(of,(char*)h->reserved5,6);
+  written+=flt_write_64(of, &h->d_db_z);
+  written+=flt_write_64(of, &h->radius);
+  written+=flt_write_16(of,&h->n_mesh_nid);
+  written+=flt_write_16(of,&h->n_lightpnt_sys_nid);
+  written+=flt_write_32(of,&h->reserved6);
+  written+=flt_write_64(of, &h->earth_major_axis);
+  written+=flt_write_64(of, &h->earth_minor_axis);
+
+  FLT_ASSERT(written==324);
+}
+
+void flt_write_extref(struct flt* of, flt_node_extref* xref)
+{
+  char name[200]={0};
+  fltu32 u32=0;
+  fltu16 u16=0;
+  flti32 written=0;
+
+  written+=flt_write_op(of, FLT_OP_EXTREF, 216);
+  if ( xref->base.name )
+    strcpy(name,xref->base.name);
+  written+=flt_write_char(of, name,200);
+  written+=flt_write_32(of, &u32);
+  written+=flt_write_32(of, &xref->flags);
+  written+=flt_write_16(of, &xref->view_asbb);
+  written+=flt_write_16(of, &u16);
+
+  FLT_ASSERT(written==216);
+}
+
+void flt_write_group(struct flt* of, flt_node_group* group)
+{
+  char name[8]={0};
+  fltu32 u32=0; fltu16 u16=0; fltu8 u8=0;
+  flti32 written=0;
+
+  written+=flt_write_op(of, FLT_OP_GROUP,44);
+  if ( group->base.name )
+    strcpy(name,group->base.name);
+  written+=flt_write_char(of,name,8);
+  written+=flt_write_16(of,&group->priority);
+  written+=flt_write_16(of,&u16);
+  u32=group->flags;
+  written+=flt_write_32(of,&u32);
+  written+=flt_write_16(of,&u16);
+  written+=flt_write_16(of,&u16);
+  written+=flt_write_16(of,&u16);
+  written+=flt_write_8(of,&u8);
+  written+=flt_write_8(of,&u8);
+  written+=flt_write_32(of,&u32);
+  written+=flt_write_32(of,&group->loop_count);
+  written+=flt_write_32(of,&group->loop_dur);
+  written+=flt_write_32(of,&group->last_fr_dur);
+  FLT_ASSERT(written==44);
+}
+
+void flt_write_lod(struct flt* of, flt_node_lod* lod)
+{
+  char name[8]={0};
+  fltu32 u32=0; fltu16 u16=0;
+  flti32 written=0;
+
+  written+=flt_write_op(of,FLT_OP_LOD,80);
+  if ( lod->base.name )
+    strcpy(name,lod->base.name);
+  written+=flt_write_char(of,name,8);
+  written+=flt_write_32(of,&u32);
+  written+=flt_write_64(of,&lod->switch_in);
+  written+=flt_write_64(of,&lod->switch_out);
+  written+=flt_write_16(of,&u16);
+  written+=flt_write_16(of,&u16);
+  written+=flt_write_32(of,&lod->flags);
+  written+=flt_write_64(of,&lod->cnt_coords[0]);
+  written+=flt_write_64(of,&lod->cnt_coords[1]);
+  written+=flt_write_64(of,&lod->cnt_coords[2]);
+  written+=flt_write_64(of,&lod->trans_range);
+  written+=flt_write_64(of,&lod->sig_size);
+  FLT_ASSERT(written==80);
+}
+
+
+void flt_write_node(struct flt* of, struct flt_node* n)
+{
+  if ( !n ) return;
+  flt_write_op(of,FLT_OP_PUSHLEVEL,4);
+
+  while (n)
+  {
+    switch ( n->type )
+    {
+    case FLT_NODE_EXTREF: flt_write_extref(of,(flt_node_extref*)n); break;
+    case FLT_NODE_GROUP: flt_write_group(of,(flt_node_group*)n); break;
+    case FLT_NODE_OBJECT: flt_write_object(of,(flt_node_object*)n);break; 
+    case FLT_NODE_MESH: flt_write_mesh(of,(flt_node_mesh*)n);break;
+    case FLT_NODE_LOD: flt_write_lod(of,(flt_node_lod*)n); break;
+    case FLT_NODE_FACE: flt_write_face(of,(flt_node_face*)n);break;
+    case FLT_NODE_VLIST: flt_write_vlist(of,(flt_node_vlist*)n);break;
+    case FLT_NODE_SWITCH: flt_write_switch(of,(flt_node_switch*)n);break;
+    }
+
+    flt_write_node(of, n->child_head);
+    n=n->next;
+  }
+
+  flt_write_op(of,FLT_OP_POPLEVEL,4);
+}
+
+int flt_write_to_filename(struct flt* of)
+{
+  flt_node* rootnode=FLT_NULL;
+
+  if ( !of->ctx )
+    of->ctx = (flt_context*)flt_calloc(1,sizeof(flt_context));
+
+  of->ctx->f = fopen(of->filename, "wb");
+  if ( !of->ctx->f ) return flt_err(FLT_ERR_FOPEN,of); 
+
+  // header
+  if ( of->header )
+  {
+    flt_write_header(of);
+  }
+
+  // palettes here
+
+  // hierarchy of nodes
+  if ( of->hie )
+  {
+    if ( of->hie->node_root )
+    {
+      if ( of->hie->node_root->type == FLT_NODE_BASE )
+        rootnode = of->hie->node_root->child_head;
+      else
+        rootnode = of->hie->node_root;
+    }
+
+    if ( rootnode )
+      flt_write_node(of,rootnode);
+  }
+
+  fclose(of->ctx->f);
+  return FLT_TRUE;
+}
+#endif
 
 #endif
 

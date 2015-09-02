@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 //#define FLT_NO_OPNAMES
-#define FLT_LEAN_FACES
+//#define FLT_LEAN_FACES
 //#define FLT_ALIGNED
 //#define FLT_UNIQUE_FACES
 #define FLT_IMPLEMENTATION
@@ -160,7 +160,9 @@ void fltThreadTask::runTask(fltThreadPool* tp)
   tp=tp;
   switch( type )
   {
-  case TASK_FLT    : flt_load_from_filename(filename.c_str(), of, opts); break;
+  case TASK_FLT    : 
+    flt_load_from_filename(filename.c_str(), of, opts); 
+    break;
   case TASK_IMGATTR: 
     {
       fltImgAttr attr;
@@ -237,48 +239,78 @@ void fltCountOf(flt* of, fltu32* tris)
 void fltXmlIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
 void fltXmlNodePrint(flt_node* n, fltThreadPool* tp, int d, bool allInfo)
 {
-  static const char* names[FLT_NODE_MAX]={"none", "base", "xref", "group", "object", "mesh", "lod", "face", "vlist", "switch"};
-  static char tmp[256];
+  static const char* names[FLT_NODE_MAX]={"none", "root", "xref", "group", "object", "mesh", "lod", "face", "vlist", "switch"};
+  static char tmp[512];
   if ( !n ) return;
+
   // my siblings and children
   do
   {
-    fltXmlIndent(d); 
-    if ( n->child_count == 0 )
+    *tmp = 0;
+    if ( n->name && *n->name ) 
+      sprintf_s(tmp," name=\"%s\"",n->name);
+    
+    bool hasAttrChildren=false;
+    switch(n->type)
     {
-		  *tmp = 0;
-      if ( n->name && *n->name ) 
-        sprintf_s(tmp," name=\"%s\"",n->name);
-
-      if ( *tmp || n->ndx_pairs_count ) 
+    case FLT_NODE_LOD:
       {
-        fltu32 start=0,end;
-        fltCountNode(n,&start);
-        if ( start )
-          printf( "<%s%s tris=\"%d\">\n", names[n->type], tmp, start);
-        else
-          printf("<%s%s>\n", names[n->type], tmp);
+      flt_node_lod* lod = (flt_node_lod*)n;
+      sprintf_s(tmp, "%s s_in_out=\"%g %g\" center=\"%g %g %g\" trange=\"%g\" ssize=\"%g\" flags=\"0x%08x\"", tmp, lod->switch_in, lod->switch_out,
+        lod->cnt_coords[0],lod->cnt_coords[1],lod->cnt_coords[2], lod->trans_range, lod->sig_size, lod->flags );
+      }break;
+    case FLT_NODE_SWITCH:
+      {
+        flt_node_switch* swi=(flt_node_switch*)n;
+        sprintf_s(tmp, "%s curmask=\"%d\" maskcount=\"%d\" wpm=\"%d\"", tmp, swi->cur_mask, swi->mask_count, swi->wpm);
+        hasAttrChildren=true;
+      }break;
+    }
+    
+    if ( n->ndx_pairs_count ) 
+    {
+      fltu32 tris=0;
+      fltCountNode(n,&tris);
+      if ( tris ) sprintf_s( tmp, "%s tris=\"%d\"", tmp, tris);
+      hasAttrChildren = true;      
+    }
+
+    // if no specific attributes or not children, just print tag and close
+    if ( !hasAttrChildren && !n->child_count )
+    {
+      fltXmlIndent(d); printf( "<%s%s/>\n", names[n->type], tmp);
+    }
+    else
+    {
+      fltXmlIndent(d); printf( "<%s%s>\n", names[n->type], tmp);
+      // specific attributes
+      if ( n->ndx_pairs_count )
+      {
+        fltu32 start,end;     
         for (fltu32 i=0;i<n->ndx_pairs_count;++i)
         {
           FLTGET32(n->ndx_pairs[i],start,end);
           fltXmlIndent(d+1); printf( "<batch ndx_start=\"%d\" ndx_end=\"%d\" />\n", start,end );
         }
-        fltXmlIndent(d); printf( "</%s>\n", names[n->type]);
       }
-      else 
-        printf( "<%s/>\n", names[n->type]);
-    }
-    else
-    {
-        if ( n->name && *n->name ) 
-          printf( "<%s name=\"%s\">\n", names[n->type], n->name);
-        else 
-          printf( "<%s>\n", names[n->type]);
-    }
 
-    fltXmlNodePrint(n->child_head, tp, d+1, allInfo);
-    if ( n->child_count )
-    {
+      if ( n->type == FLT_NODE_SWITCH )
+      {
+        flt_node_switch* swi=(flt_node_switch*)n;
+        if ( swi->mask_count && swi->maskwords )
+        {
+          fltXmlIndent(d+1); printf( "<wordmasks>" );           
+          int end = swi->mask_count*swi->wpm;
+          for ( int i = 0; i < end; ++i ) printf( "0x%08x ", swi->maskwords[i]);
+          printf( "</wordmasks>\n" );
+        }
+      }
+      
+      // children nodes
+      if ( n->child_count)
+        fltXmlNodePrint(n->child_head, tp, d+1, allInfo);
+
+      // closing node tag
       fltXmlIndent(d); printf( "</%s>\n", names[n->type]);
     }
     n = n->next;
@@ -315,12 +347,48 @@ void fltXmlPrintFace(int d, fltu32 facehash, flt_face* face)
   fltXmlIndent(d); printf( "</face>\n");
 }
 
+const char* fltGetSizeStr(unsigned int size)
+{
+  static char tmp[128];
+  *tmp=0;
+  if ( size < 1024 )
+    sprintf_s(tmp, "%d b", size);
+  else if ( size < (1<<20) )
+    sprintf_s(tmp, "%.2f Kb", size/1024.0f);
+  else if ( size < (1<<30) )
+    sprintf_s(tmp, "%.2f Mb", size/(1024.0f*1024.0f));
+  else 
+    sprintf_s(tmp, "%.2f Gb", size/(1024.0f*1024.0f*1024.0f));
+  return tmp;
+}
 
 void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, fltThreadPool* tp, bool allInfo)
 {
   if ( !of || of->loaded != FLT_LOADED ) return;
   
   fltXmlIndent(d); printf( "<file name=\"%s\">\n", of->filename);
+
+  // counters
+  fltXmlIndent(d+1); printf( "<counters>\n");
+  {
+    fltXmlIndent(d+2); printf( "<records>%d</records>\n", of->ctx->rec_count );
+    if ( of->hie && of->hie->node_count) 
+    { 
+      fltXmlIndent(d+2); printf( "<nodes>%d</nodes>\n", of->hie->node_count); 
+      *tot_nodes += of->hie->node_count; 
+    }
+
+    if ( of->pal )
+    {
+      fltu32 tris=0;
+      fltCountOf(of,&tris);
+      if (of->pal->vtx_count) { fltXmlIndent(d + 2); printf("<vertices>%d</vertices>\n", of->pal->vtx_count); }
+      if ( tris ){ fltXmlIndent(d+2); printf( "<triangles>%d</triangles>\n", tris); }
+      if ( of->pal->tex_count ){ fltXmlIndent(d+2); printf( "<textures>%d</textures>\n", of->pal->tex_count); }      
+    }
+  }
+  fltXmlIndent(d+1); printf( "</counters>\n");
+
   if ( of->header )
   {
     fltXmlIndent(d+1); printf( "<header ascii=\"%s\">\n", of->header->ascii);
@@ -353,27 +421,6 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
     fltXmlIndent(d+1); printf( "</header>\n");
   }
 
-  // counters
-  fltXmlIndent(d+1); printf( "<counters>\n");
-  {
-    fltXmlIndent(d+2); printf( "<records>%d</records>\n", of->ctx->rec_count );
-    if ( of->hie && of->hie->node_count) 
-    { 
-      fltXmlIndent(d+2); printf( "<nodes>%d</nodes>\n", of->hie->node_count); 
-      *tot_nodes += of->hie->node_count; 
-    }
-
-    if ( of->pal )
-    {
-      fltu32 tris=0;
-      fltCountOf(of,&tris);      
-      if (of->pal->vtx_count) { fltXmlIndent(d + 2); printf("<vertices>%d</vertices>\n", of->pal->vtx_count); }
-      if ( tris ){ fltXmlIndent(d+2); printf( "<triangles>%d</triangles>\n", tris); }
-      if ( of->pal->tex_count ){ fltXmlIndent(d+2); printf( "<textures>%d</textures>\n", of->pal->tex_count); }      
-    }
-  }
-  fltXmlIndent(d+1); printf( "</counters>\n");
-
   // hierarchy and recursive print
   if ( of->hie )
   {
@@ -405,8 +452,17 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
     if(of->pal->tex_count)
     { 
       flt_pal_tex* tex = of->pal->tex_head;
+      fltu32 totalsize=0;
       fltImgMap::iterator it;
-      fltXmlIndent(d+1); printf( "<textures>\n");
+      while (tex)
+      {
+        it = tp->imgattrs.find(tex->name);
+        if ( it != tp->imgattrs.end() ) totalsize += it->second.size; 
+        tex = tex->next;
+      }
+
+      tex = of->pal->tex_head;
+      fltXmlIndent(d+1); printf( "<textures totalsize=\"%s\">\n", fltGetSizeStr(totalsize));
       while (tex)
       {
         it = tp->imgattrs.find(tex->name);
@@ -414,9 +470,9 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
         {
           fltXmlIndent(d+2); 
           if ( it->second.depth>=0 )
-            printf( "<tex w=\"%d\" h=\"%d\" d=\"%d\" size=\"%d\">%s</tex>\n" , it->second.width, it->second.height, it->second.depth, it->second.size, tex->name);
+            printf( "<tex w=\"%d\" h=\"%d\" d=\"%d\" size=\"%s\">%s</tex>\n" , it->second.width, it->second.height, it->second.depth, fltGetSizeStr(it->second.size), tex->name);
           else
-            printf( "<tex w=\"%d\" h=\"%d\" f=\"DXT%d\" size=\"%d\">%s</tex>\n" , it->second.width, it->second.height, -it->second.depth, it->second.size, tex->name);
+            printf( "<tex w=\"%d\" h=\"%d\" f=\"DXT%d\" size=\"%s\">%s</tex>\n" , it->second.width, it->second.height, -it->second.depth, fltGetSizeStr(it->second.size), tex->name);
         }
         else
         {
@@ -433,21 +489,26 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
       // vertices
       if (of->pal && of->pal->vtx_array)
       {
-        const bool hasPosition = (of->ctx->opts->palflags & FLT_OPT_PAL_VTX_POSITION) != 0;
-        const bool singlePos = (of->ctx->opts->palflags & FLT_OPT_PAL_VTX_POSITION_SINGLE) != 0;
-        const bool hasNormal = (of->ctx->opts->palflags & FLT_OPT_PAL_VTX_NORMAL) != 0;
-        const bool hasUv = (of->ctx->opts->palflags & FLT_OPT_PAL_VTX_UV) != 0;
-        const bool hasColor = (of->ctx->opts->palflags & FLT_OPT_PAL_VTX_COLOR) != 0;
-        char sem[5] = { hasPosition?'P':' ', hasNormal?'N':' ', hasUv?'T':' ', hasColor?'C':' ', 0 };
+        const bool hasPosition = (of->ctx->opts->pflags & FLT_OPT_PAL_VTX_POSITION) != 0;
+        const bool singlePos = (of->ctx->opts->pflags & FLT_OPT_PAL_VTX_POSITION_SINGLE) != 0;
+        const bool hasNormal = (of->ctx->opts->pflags & FLT_OPT_PAL_VTX_NORMAL) != 0;
+        const bool hasUv = (of->ctx->opts->pflags & FLT_OPT_PAL_VTX_UV) != 0;
+        const bool hasColor = (of->ctx->opts->pflags & FLT_OPT_PAL_VTX_COLOR) != 0;
+        int semn=0;
+        char sem[5] = { 0 };
+        if ( hasPosition ) sem[semn++]=singlePos?'p':'P';
+        if ( hasNormal ) sem[semn++]='N';
+        if ( hasUv ) sem[semn++]='T';
+        if ( hasColor ) sem[semn++]='C';
         fltXmlIndent(d + 1); printf("<vertices type=\"array\" count=\"%d\" semantic=\"%s\">\n", of->pal->vtx_count, sem);
 
         fltu32 offs;
         double* pd;
         float* pf;
         fltu32* pc;
-        char tmp[256];
+        char tmp[512];
         fltu8* vtx=of->pal->vtx_array;
-        fltu32 vsize = flt_compute_vertex_size(of->ctx->opts->palflags);
+        fltu32 vsize = flt_compute_vertex_size(of->ctx->opts->pflags);
         for (fltu32 i = 0; i < of->pal->vtx_count; ++i, vtx += vsize)
         {
           offs = 0;
@@ -459,19 +520,19 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
           if (hasNormal)
           {
             pf = (float*)(vtx + offs);
-            sprintf_s(tmp, " N=\"%g %g %g\"", pf[0], pf[1], pf[2]);
+            sprintf_s(tmp, "%s N=\"%g %g %g\"", tmp, pf[0], pf[1], pf[2]);
             offs += sizeof(float) * 3;
           }
           if (hasUv)
           {
             pf = (float*)(vtx + offs);
-            sprintf_s(tmp, " T=\"%g %g\"", pf[0], pf[1]);
+            sprintf_s(tmp, "%s T=\"%g %g\"", tmp, pf[0], pf[1]);
             offs += sizeof(float) * 2;
           }
           if ( hasColor)
           { 
             pc = (fltu32*)(vtx + offs);
-            sprintf_s(tmp, " C=\"0x%08x\"", *pc);
+            sprintf_s(tmp, "%s C=\"0x%08x\"", tmp, *pc);
           }
           fltXmlIndent(d + 2); printf("<v %s />\n", tmp);
         }
@@ -552,9 +613,9 @@ void fltXmlPrint(flt* of, flt_opts* opts, int nfiles, double tim, fltThreadPool*
   fltXmlIndent(2); printf("<faces>%d</faces>\n", TOTALNFACES);
   fltXmlIndent(2); printf("<unique_faces>%d</unique_faces>\n", TOTALUNIQUEFACES);
   fltXmlIndent(2); printf("<indices>%d</indices>\n", TOTALINDICES);
-  fltXmlIndent(2); printf("<opcodes>\n");
-  if ( opts->countable )
+  if ( allInfo && opts->countable )
   {
+    fltXmlIndent(2); printf("<opcodes>\n");
     for ( int i = 0; i < FLT_OP_MAX; ++i )
     {
       if ( opts->countable[i] )
@@ -562,8 +623,8 @@ void fltXmlPrint(flt* of, flt_opts* opts, int nfiles, double tim, fltThreadPool*
         fltXmlIndent(3); printf( "<op_%03d name=\"%s\">%d</op_%03d>\n", i, flt_get_op_name((fltu16)i), opts->countable[i], i);
       }
     }
+    fltXmlIndent(2); printf("</opcodes>\n");
   }
-  fltXmlIndent(2); printf("</opcodes>\n");
   fltXmlIndent(1); printf("</stats>\n");
 
   fltXmlOfPrint(of,1,done,&counterctx, tp, allInfo);
@@ -612,18 +673,18 @@ int fltCallbackTexture(struct flt_pal_tex* texpal, struct flt* of, void* user_da
 }
 
 
-void read_with_callbacks_mt(const std::vector<std::string>& files, bool inspectTex, bool allInfo, bool recurse)
+void read_with_callbacks_mt(const std::vector<std::string>& files, bool inspectTex, bool allInfo, bool recurse, fltu32 vtxmask)
 {
   fltThreadPool tp;
   tp.numThreads = std::thread::hardware_concurrency()*2;
   tp.init();
   tp.inspectTexture=inspectTex;
-
+    
   // configuring read options
   flt_opts* opts=(flt_opts*)flt_calloc(1,sizeof(flt_opts));
   flt* of=(flt*)flt_calloc(1,sizeof(flt));
-  opts->palflags = FLT_OPT_PAL_TEXTURE | FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_POSITION;
-  opts->hieflags = FLT_OPT_HIE_ALL_NODES | FLT_OPT_HIE_HEADER;
+  opts->pflags = FLT_OPT_PAL_TEXTURE | FLT_OPT_PAL_VERTEX | vtxmask;
+  opts->hflags = FLT_OPT_HIE_ALL_NODES | FLT_OPT_HIE_HEADER;
   opts->dfaces_size = 3079;//1543;
   opts->cb_texture = fltCallbackTexture;
   opts->cb_extref = recurse ? fltCallbackExtRef : FLT_NULL;
@@ -644,8 +705,6 @@ void read_with_callbacks_mt(const std::vector<std::string>& files, bool inspectT
 
   // dumping info to xml
   fltXmlPrint(of, opts, tp.nfiles, (fltGetTime()-t0)/1000.0, &tp, allInfo);
-
-  MessageBox(NULL, "continue", "continue", MB_OK);
 
   // releasing memory
   flt_release(of);
@@ -762,6 +821,7 @@ int main(int argc, const char** argv)
   bool allInfo=false;
   bool recurse = false;
   std::vector<std::string> files;
+  fltu32 vtxmask=0;
   for ( int i = 1; i < argc; ++i )
   {
     if ( argv[i][0]=='-' )
@@ -771,6 +831,25 @@ int main(int argc, const char** argv)
       case 't': inspectTex=true; break;
       case 'a': allInfo=true; break;
       case 'r': recurse = true; break;
+      case 'v': 
+      {
+        if ( i+1 < argc )
+        {
+          int j=0; char c;
+          while ( (c=argv[i+1][j++]) )
+          {
+            switch (tolower(c))
+            {
+            case 'p': vtxmask |= FLT_OPT_PAL_VTX_POSITION; break;
+            case 'n': vtxmask |= FLT_OPT_PAL_VTX_NORMAL; break;
+            case 't': vtxmask |= FLT_OPT_PAL_VTX_UV; break;
+            case 'c': vtxmask |= FLT_OPT_PAL_VTX_COLOR; break;
+            case 's': vtxmask |= FLT_OPT_PAL_VTX_POSITION_SINGLE; break;
+            }
+          }
+          ++i;
+        }
+      }break;
       default : printf ( "Unknown option -%c\n", argv[i][1]); 
       }
     }
@@ -780,22 +859,26 @@ int main(int argc, const char** argv)
 
   if ( !files.empty() )
   {
-    read_with_callbacks_mt(files, inspectTex, allInfo, recurse);
+    if ( !vtxmask ) { vtxmask = FLT_OPT_PAL_VTX_POSITION; }
+    read_with_callbacks_mt(files, inspectTex, allInfo, recurse, vtxmask);
   }
   else
   {
     char* program=flt_path_basefile(argv[0]);
     printf("flt2xml: Dumps (Unique Faces version) Openflight metadata in xml format\n\n" );    
-    printf("Usage: $ %s <option> <flt_file> \nOptions:\n", program );    
+    printf("Usage: $ %s <options> <flt_file> \nOptions:\n", program );    
     printf("\t -t   : Inspect texture headers.\n" );    
     printf("\t -a   : Dump all information (vertices/faces)\n");
     printf("\t -r   : Recursive. Resolve all external references recursively\n");
+    printf("\t -v pntcs: Vertex mask. p=position n=normal t=uv c=color s=single precision\n" );
     printf("\t Supported image formats: rgb, rgba, sgi, jpg, jpeg, png, tga, bmp, dds\n" );
     printf("\nExamples:\n" );
     printf("\tDump all information recursively into a xml file:\n" );
     printf("\t  $ %s master.flt -t -a -r > alldb.xml\n\n", program);    
     printf("\tOnly writes structure info into xml:\n" );
     printf("\t  $ %s model.flt > model.xml\n\n", program );
+    printf("\tDump only single precision Position and Normals of model.flt:\n" );
+    printf("\t  $ %s -a -v pn tank.flt > tank.xml\n\n", program);    
     flt_free(program);
   }
   

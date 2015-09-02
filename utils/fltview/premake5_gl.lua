@@ -1,8 +1,8 @@
 -- WORK IN PROGRESS NOT USE --
 local action = _ACTION or ""
-
+local build="build"..action
 solution "fltview_gl"
-	location ( "build" )
+	location ( build )
 	configurations { "Debug", "Release" }
 	platforms {"x64", "x32"}
   
@@ -31,26 +31,26 @@ solution "fltview_gl"
             defines { "DEBUG", "_DEBUG" }
             flags { "Symbols", "ExtraWarnings"}                
             libdirs {"../../extern/vld/lib/Win32/", "../../extern/GLFW/lib/release/x86/"}
-            objdir "./build/obj/x32/debug"
-            targetdir "./build/bin/x32/debug/"
+            objdir (build.."/obj/x32/debug")
+            targetdir (build.."/bin/x32/debug/")
             
         configuration { "Debug", "x64" }
             defines { "DEBUG", "_DEBUG" }
             flags { "Symbols", "ExtraWarnings"}
             libdirs {"../../extern/vld/lib/Win64/", "../../extern/GLFW/lib/release/x86/"}
-            objdir "./build/obj/x64/debug"
-            targetdir "./build/bin/x64/debug/"
+            objdir (build.."/obj/x64/debug")
+            targetdir (build.."/bin/x64/debug/")
 
         configuration {"Release", "x32"}
             defines { "NDEBUG" }            
             flags { "Optimize", "ExtraWarnings"}            
             libdirs {"../../extern/GLFW/lib/release/x86/"}
-            objdir "./build/obj/x32/release"
-            targetdir "./build/bin/x32/release/"
+            objdir (build.."/obj/x32/release")
+            targetdir (build.."/bin/x32/release/")
             
         configuration {"Release", "x64"}
             defines { "NDEBUG" }
             flags { "Optimize", "ExtraWarnings"}
             libdirs {"../../extern/GLFW/lib/release/x86/"}
-            objdir "./build/obj/x64/release"    
-            targetdir "./build/bin/x64/release/"            
+            objdir (build.."/obj/x64/release")
+            targetdir (build.."/bin/x64/release/")
