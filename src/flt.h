@@ -148,6 +148,7 @@ DOCUMENTATION
 #define FLT_OPT_HIE_NO_NAMES        (1<<20) // don't store names nor longids
 #define FLT_OPT_HIE_EXTREF_RESOLVE  (1<<21) // xrefs aren't resolved by default, set this bit to make it
 #define FLT_OPT_HIE_COMMENTS        (1<<22) // include comments 
+#define FLT_OPT_HIE_GO_THROUGH      (1<<23)
 
 #define FLT_OPT_HIE_RESERVED1       (1<<30) // not used
 #define FLT_OPT_HIE_RESERVED2       (1<<31)
@@ -531,6 +532,10 @@ extern "C" {
 #endif
 
 #define FLT_ASSERT(c) { if (!(c)){ FLT_BREAK; } }
+#else
+#define FLT_BREAK {(void*)0;}
+#define FLT_ASSERT(c)
+#endif
 
 #ifdef _MSC_VER
 #define FLT_BREAK_ALWAYS { __debugbreak(); }
@@ -538,10 +543,6 @@ extern "C" {
 #define FLT_BREAK_ALWAYS { raise(SIGTRAP); }
 #endif
 
-#else
-#define FLT_BREAK {(void*)0;}
-#define FLT_ASSERT(c)
-#endif
 
 // Memory functions override
 #if defined(flt_malloc) && defined(flt_free) && defined(flt_calloc) && defined(flt_realloc)
@@ -700,7 +701,7 @@ typedef struct flt_end_desc
 // context data used while parsing
 typedef struct flt_context
 {
-  char tmpbuff[256];
+  char tmpbuff[512];
   FILE* f;
   struct flt_pal_tex* pal_tex_last;
   struct flt_node_extref* node_extref_last;
@@ -975,7 +976,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   {
     ++ctx->rec_count;
     // if reader function available, use it
-    skipbytes = readtab[oh.op] ? readtab[oh.op](&oh, of) : oh.length-sizeof(flt_op);    
+    skipbytes = ( readtab[oh.op] && !(opts->hflags&FLT_OPT_HIE_GO_THROUGH) ) ? readtab[oh.op](&oh, of) : oh.length-sizeof(flt_op);    
     ctx->op_last = oh.op;
 
     if ( opts->countable )
@@ -2016,7 +2017,7 @@ flt_node* flt_node_create(fltu32 hieflags, int nodetype, const char* name)
   if (n)
   {
     n->type = nodetype;
-    if ( (!(hieflags & FLT_OPT_HIE_NO_NAMES) && name && *name) || nodetype==FLT_NODE_EXTREF)
+    if ( (!(hieflags & FLT_OPT_HIE_NO_NAMES) || nodetype==FLT_NODE_EXTREF) && name && *name )
       n->name = flt_strdup(name);
   }
   return n;
@@ -3157,6 +3158,30 @@ void flt_write_lod(struct flt* of, flt_node_lod* lod)
   FLT_ASSERT(written==80);
 }
 
+void flt_write_object(struct flt* of, flt_node_object* obj)
+{
+
+}
+
+void flt_write_mesh(struct flt* of, flt_node_mesh* mesh)
+{
+
+}
+
+void flt_write_face(struct flt* of, flt_node_face* face)
+{
+
+}
+
+void flt_write_vlist(struct flt* of, flt_node_vlist* vlist)
+{
+
+}
+
+void flt_write_switch(struct flt* of, flt_node_switch* swi)
+{
+
+}
 
 void flt_write_node(struct flt* of, struct flt_node* n)
 {

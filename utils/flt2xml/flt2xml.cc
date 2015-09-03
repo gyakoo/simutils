@@ -476,7 +476,7 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
         }
         else
         {
-          fltXmlIndent(d+2); printf( "<tex w=\"-1\" h=\"-1\" d=\"-1\" size=\"-1\">%s</tex>\n", tex->name );
+          fltXmlIndent(d+2); printf( "<tex>%s</tex>\n", tex->name );
         }
         tex = tex->next;
       } 
@@ -613,14 +613,14 @@ void fltXmlPrint(flt* of, flt_opts* opts, int nfiles, double tim, fltThreadPool*
   fltXmlIndent(2); printf("<faces>%d</faces>\n", TOTALNFACES);
   fltXmlIndent(2); printf("<unique_faces>%d</unique_faces>\n", TOTALUNIQUEFACES);
   fltXmlIndent(2); printf("<indices>%d</indices>\n", TOTALINDICES);
-  if ( allInfo && opts->countable )
+  if ( opts->countable )
   {
     fltXmlIndent(2); printf("<opcodes>\n");
     for ( int i = 0; i < FLT_OP_MAX; ++i )
     {
       if ( opts->countable[i] )
       {
-        fltXmlIndent(3); printf( "<op_%03d name=\"%s\">%d</op_%03d>\n", i, flt_get_op_name((fltu16)i), opts->countable[i], i);
+        fltXmlIndent(3); printf( "<op_%03d name=\"%s\" count=\"%d\" />\n", i, flt_get_op_name((fltu16)i), opts->countable[i], i);
       }
     }
     fltXmlIndent(2); printf("</opcodes>\n");
@@ -689,7 +689,7 @@ void read_with_callbacks_mt(const std::vector<std::string>& files, bool inspectT
   opts->cb_texture = fltCallbackTexture;
   opts->cb_extref = recurse ? fltCallbackExtRef : FLT_NULL;
   opts->cb_user_data = &tp;
-  opts->countable = allInfo ? (fltatom32*)flt_calloc(1, sizeof(fltatom32)*FLT_OP_MAX) : FLT_NULL;
+  opts->countable = (fltatom32*)flt_calloc(1, sizeof(fltatom32)*FLT_OP_MAX);
 
   // master file task
   tp.nfiles=1;
@@ -870,8 +870,8 @@ int main(int argc, const char** argv)
     printf("\t -t   : Inspect texture headers.\n" );    
     printf("\t -a   : Dump all information (vertices/faces)\n");
     printf("\t -r   : Recursive. Resolve all external references recursively\n");
-    printf("\t -v pntcs: Vertex mask. p=position n=normal t=uv c=color s=single precision\n" );
-    printf("\t Supported image formats: rgb, rgba, sgi, jpg, jpeg, png, tga, bmp, dds\n" );
+    printf("\t -v pntcs: Vertex mask. p=position n=normal t=uv c=color s=single precision\n\n" );
+    printf("Supported image formats: rgb, rgba, sgi, jpg, jpeg, png, tga, bmp, dds\n" );
     printf("\nExamples:\n" );
     printf("\tDump all information recursively into a xml file:\n" );
     printf("\t  $ %s master.flt -t -a -r > alldb.xml\n\n", program);    

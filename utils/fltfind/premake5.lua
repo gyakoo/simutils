@@ -1,15 +1,15 @@
 -- WORK IN PROGRESS NOT USE --
 local action = _ACTION or ""
 local build="build"..action
-solution "fltmake"
+solution "fltfind"
 	location ( build )
 	configurations { "Debug", "Release" }
 	platforms {"x64", "x32"}
   
-  	project "fltmake"
+  	project "fltfind"
 		kind "ConsoleApp"
 		language "C++"
-		files { "fltmake.cc", "../../src/flt.h" }
+		files { "fltfind.cc", "../../src/flt.h" }
 		includedirs { "./", "../../src/", "../../extern/vld/include/"}
 	 		
 		configuration { "windows" }   
