@@ -31,7 +31,7 @@ struct fltThreadPool;
 struct fltThreadPoolContext;
 struct fltThreadTask;
 void fltExtractTasksFromRecursiveWildcard(fltThreadPool* tp, const std::string& path, bool recurse);
-
+enum fltOper{ O_OR, O_AND};
 struct fltThreadTask
 {
   enum fltTaskType { TASK_NONE=-1, TASK_FLT=0};
@@ -68,6 +68,7 @@ struct fltThreadPool
   uint64_t nfiles;
   int numThreads;
   bool finish;
+  fltOper oper;
 };
 
 double fltGetTime();
@@ -81,6 +82,7 @@ void fltThreadPool::init()
   nfiles=0;
   for(int i = 0; i < numThreads; ++i)
     threads.push_back(new std::thread(&fltThreadPool::runcode,this));
+  oper=O_OR;
 }
 
 void fltThreadPool::runcode()
@@ -143,14 +145,44 @@ void fltThreadTask::runTask(fltThreadPool* tp)
       flt_load_from_filename(filename.c_str(), of, opts); 
 
       // check the opcodes
-      bool allok=true;
-      for ( size_t i = 0; i < tp->opcodes.size(); ++i )
+      if ( tp->oper == O_AND )
       {
-        if ( opts->countable[tp->opcodes[i]] == 0 )
+        bool allok=true;
+        for ( size_t i = 0; i < tp->opcodes.size(); ++i )
         {
-          allok = false;
-          break;
+          if ( opts->countable[tp->opcodes[i]] == 0 )
+          {
+            allok = false;
+            break;
+          }
         }
+        if ( allok )
+          printf( "%s\n", filename.c_str() );
+      }
+      else // OR
+      {
+        fltu16* ops=(fltu16*)flt_calloc(1,sizeof(fltu16)*tp->opcodes.size());
+        bool any=false;
+        for ( size_t i = 0; i < tp->opcodes.size(); ++i )
+        {
+          if ( opts->countable[tp->opcodes[i]] != 0 )
+          {
+            any=true;
+            ops[i]=(fltu16)tp->opcodes[i];
+          }
+        }
+        if ( any )
+        {
+          printf( "%s: ", filename.c_str() );
+          for ( size_t i = 0; i < tp->opcodes.size(); ++i )
+          {
+            if ( ops[i] )
+              printf( "%d ", ops[i] );
+          }
+          printf( "\n" );
+        }
+
+        flt_free(ops);
       }
       // releasing memory
       flt_release(of);
@@ -158,8 +190,7 @@ void fltThreadTask::runTask(fltThreadPool* tp)
       flt_safefree(opts->countable);
       flt_safefree(opts);
 
-      if ( allok )
-        printf( "%s\n", filename.c_str() );
+      
 
     }break;
   }
@@ -179,12 +210,13 @@ double fltGetTime()
 #endif
 }
 
-void read_with_callbacks_mt(bool recurse, const std::vector<int>& opcodes, const std::string& dir)
+void read_with_callbacks_mt(bool recurse, const std::vector<int>& opcodes, const std::string& dir, fltOper oper)
 {
   fltThreadPool tp;
   tp.numThreads = std::thread::hardware_concurrency()*2;
   tp.init();
   tp.opcodes = opcodes;
+  tp.oper = oper;
 
   double t0=fltGetTime();
   fltExtractTasksFromRecursiveWildcard(&tp,dir,recurse);
@@ -206,11 +238,14 @@ int print_usage(const char* p)
   printf("%s: Find Openflight files with specific attributes\n\n", program);
   printf("Usage: $ %s <options> \nOptions:\n", program );    
   printf("\t -r          : Recursive search\n" );
-  printf("\t -o 0,1,...  : Comma separated values of opcodes to look for it. Only if the file contains all of them, will show\n" );  
+  printf("\t -o OR|AND   : Boolean operation for opcodes specified with -p. OR will look for any of those in files. AND for all of them.\n" );
+  printf("\t -p 0,1,...  : Comma separated values of opcodes to look for it. Only if the file contains all of them, will show\n" );
   printf("\t -d dir      : Starting directory where to look at\n" );
   printf("\nExamples:\n" );
-  printf("\tFind all FLT files with LOD and MESH records.\n" );
-  printf("\t  $ %s -r -d D:\\flightdata\\ -o 73,84\n\n", program);
+  printf("\tFind all FLT files with LOD OR MESH records.\n" );
+  printf("\t  $ %s -r -d D:\\flightdata\\ -p 73,84 -o OR\n", program);
+  printf("\tFind all FLT files having Color AND Vertex Palete Records.\n" );
+  printf("\t  $ %s -r -d D:\\flightdata\\ -p 67;32 -o AND\n\n", program);
   flt_free(program);
   return -1;
 }
@@ -228,6 +263,7 @@ int main(int argc, const char** argv)
   std::vector<int> opcodes; opcodes.reserve(8);
   std::string dir;
   char c;
+  fltOper oper = O_OR;
   for ( int i = 1; i < argc; ++i )
   {
     if ( argv[i][0]=='-' )
@@ -237,7 +273,8 @@ int main(int argc, const char** argv)
       {
       case 'r': recurse = true;break;
       case 'd': if ( i+1<argc ) dir = argv[++i];break;
-      case 'o': 
+      case 'o': if ( i+1<argc && !stricmp(argv[++i],"AND") ) oper = O_AND; break;
+      case 'p': 
         {
           if ( i+1<argc )
           {
@@ -271,7 +308,7 @@ int main(int argc, const char** argv)
   }
   else
   {
-    read_with_callbacks_mt(recurse, opcodes, dir);  
+    read_with_callbacks_mt(recurse, opcodes, dir, oper);  
   }
   return 0;
 }

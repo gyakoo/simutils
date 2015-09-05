@@ -1345,7 +1345,7 @@ FLT_RECORD_READER(flt_reader_local_vertex_pool)
     flt_getswapu32(mesh->vb->count,0);
     flt_getswapu32(mesh->vb->semantic,4);
   }
-
+  fprintf( stderr, "LOCAL VERTEX POOL NOT SUPPORTED\n" );
   return leftbytes;
 }
 
@@ -1356,6 +1356,7 @@ FLT_RECORD_READER(flt_reader_mesh_primitive)
   //flt_context* ctx=of->ctx;
   int leftbytes = oh->length-sizeof(flt_op);
   //fltu32* u32; flti32* i32; fltu16* u16; flti16* i16;
+  fprintf( stderr, "MESH PRIMITIVE NOT SUPPORTED\n" );
 
   return leftbytes;
 }
