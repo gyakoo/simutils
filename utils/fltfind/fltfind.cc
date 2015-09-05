@@ -65,7 +65,7 @@ struct fltThreadPool
   std::mutex mtxTasks;
   std::mutex mtxFiles;
   std::atomic_int workingTasks;
-  std::atomic_int nfiles;
+  uint64_t nfiles;
   int numThreads;
   bool finish;
 };
@@ -192,11 +192,12 @@ void read_with_callbacks_mt(bool recurse, const std::vector<int>& opcodes, const
   // wait until cores finished
   do
   {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));    
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));    
   } while ( tp.isWorking() );
 
-  printf( "Time: %g secs.\n", (fltGetTime()-t0)/1000.0);
   tp.deinit();
+  printf( "Files to processed: %I64u\n", tp.nfiles);
+  printf( "Time: %g secs.\n", (fltGetTime()-t0)/1000.0);
 }
 
 int print_usage(const char* p)
@@ -316,8 +317,9 @@ void fltExtractTasksFromRecursiveWildcard(fltThreadPool* tp, const std::string& 
           opts->countable = (fltatom32*)flt_calloc(1, sizeof(fltatom32)*FLT_OP_MAX);
 
           // add task for this file
-          ++tp->nfiles;
-          fltThreadTask task(fltThreadTask::TASK_FLT, ffdata.cFileName, of, opts);
+          ++tp->nfiles;          
+          sprintf_s( filterTxt, fltEndsWithSlash(path) ? "%s%s" : "%s\\%s", path.c_str(), ffdata.cFileName );
+          fltThreadTask task(fltThreadTask::TASK_FLT, filterTxt, of, opts);
           tp->addNewTask(task);  
         }
       }

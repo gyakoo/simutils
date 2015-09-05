@@ -57,6 +57,9 @@ void open_add_lod(const std::string& lff, int i, std::vector<lod>& lods)
   lod l;
   char* start;
   l.groupnode = (flt_node_group*)flt_node_create(0,FLT_NODE_GROUP,FLT_NULL);
+  double sio[2]={0};
+  double cen[3]={0};
+  double ran=0.0;
   while (fgets(tmp,512,f))
   {
     start = tmp;
@@ -72,7 +75,7 @@ void open_add_lod(const std::string& lff, int i, std::vector<lod>& lods)
   lods.push_back(l);
 }
 
-void prepare_hie(flt_hie* hie, const std::string& lff, double s_in, double s_out, double* center, double trange, double sigsize)
+void prepare_hie(flt_hie* hie, const std::string& lff)
 {
   std::vector<lod> lods;
   for ( int i = 0; i < 10; ++i )
@@ -129,14 +132,14 @@ void prepare_hie(flt_hie* hie, const std::string& lff, double s_in, double s_out
   }
 }
 
-void write_file(const std::string& outfile, const std::string& lff, double s_in, double s_out, double* center, double trange, double sigsize)
+void write_file(const std::string& outfile, const std::string& lff)
 {
   flt* of=(flt*)flt_calloc(1,sizeof(flt));
   of->filename=flt_strdup(outfile.c_str());
   of->header = (flt_header*)flt_calloc(1,sizeof(flt_header));
   prepare_header(of->header);
   of->hie = (flt_hie*)flt_calloc(1,sizeof(flt_hie));
-  prepare_hie(of->hie, lff, s_in, s_out, center, trange, sigsize);
+  prepare_hie(of->hie, lff);
 
   if ( !flt_write_to_filename(of) )
     printf( "Error\n" );
@@ -154,14 +157,10 @@ void print_usage(const char* p)
   printf( "Options:\n");
   printf( "\t -?        : This help screen\n");
   printf( "\t -l lodff  : LOD Files printf Format. Something like lod%%i.txt\n");
-  printf( "\t -o        : Output file. default=master.flt\n" );
-  printf( "\t -d IN OUT : Switching in/out distances. default=0 0\n" );
-  printf( "\t -c X Y Z  : Center coordinates of LOD. default=0 0 0\n" );
-  printf( "\t -r RANGE  : Transition range. default=0\n" );
-  printf( "\t -s SIZE   : Significant size. default=0\n" );    
+  printf( "\t -o        : Output file. default=master.flt\n" );  
   printf( "\nExamples:\n" );
-  printf( "\tCreates a master out of lod[n].txt files in the current folder with some parameters:\n" );
-  printf( "\t  $ %s -o mymaster.flt -d 1.0 50.0 -c 0.5 0.5 1.0 -r 100.0 -s 20.0\n\n", program);
+  printf( "\tCreates a master out of lod[n].txt files in the current folder:\n" );
+  printf( "\t  $ %s -o mymaster.flt\n\n", program);
   printf( "\tCreates a master out of these lod files:\n" );
   printf( "\t  $ %s -l C:\\mylod_%%i.txt -o C:\\master.flt\n\n", program);
   flt_free(program);
@@ -171,9 +170,6 @@ int main(int argc, const char** argv)
 {
   std::string outfile, lodfilefmt;
   char c;
-  double s_in=0.0, s_out=0.0;
-  double center[3]={0};
-  double trange=0, sigsize=0;
   for ( int i = 1; i < argc; ++i )
   {
     if ( argv[i][0]=='-' )
@@ -187,20 +183,7 @@ int main(int argc, const char** argv)
         break;
       case 'o':
         if (i+1<argc) outfile = argv[++i];
-      break;      
-      case 'd':
-        if ( i+1<argc) s_in = atof(argv[++i]);
-        if ( i+1<argc) s_out= atof(argv[++i]);
-      break;
-      case 'c':
-        for (int k=0;k<3;++k) if ( i+1<argc) center[k] = atof(argv[++i]);
-      break;
-      case 'r':
-        if ( i+1<argc) trange = atof(argv[++i]);
-      break;
-      case 's':
-        if ( i+1<argc) sigsize = atof(argv[++i]);
-      break;
+      break;            
       case 'l':
         if (i+1<argc) lodfilefmt = argv[++i];
       break;
@@ -211,6 +194,6 @@ int main(int argc, const char** argv)
     outfile = "master.flt";
   if ( lodfilefmt.empty() )
     lodfilefmt = "lod%d.txt";
-  write_file(outfile, lodfilefmt, s_in, s_out, center, trange, sigsize);    
+  write_file(outfile, lodfilefmt);
   return 0;
 }

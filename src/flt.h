@@ -1332,7 +1332,7 @@ FLT_RECORD_READER(flt_reader_local_vertex_pool)
 {
   flt_context* ctx=of->ctx;
   int leftbytes = oh->length-sizeof(flt_op);
-  fltu32* u32; flti32* i32; fltu16* u16; flti16* i16;
+  fltu32* u32;
 
   FLT_ASSERT(leftbytes != 0xffff); // there'll be a continuation record, do something!
   flt_node_mesh* mesh = (flt_node_mesh*)flt_stack_topn_not_null(ctx->stack);
@@ -1353,9 +1353,9 @@ FLT_RECORD_READER(flt_reader_local_vertex_pool)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 FLT_RECORD_READER(flt_reader_mesh_primitive)
 {
-  flt_context* ctx=of->ctx;
+  //flt_context* ctx=of->ctx;
   int leftbytes = oh->length-sizeof(flt_op);
-  fltu32* u32; flti32* i32; fltu16* u16; flti16* i16;
+  //fltu32* u32; flti32* i32; fltu16* u16; flti16* i16;
 
   return leftbytes;
 }
@@ -1819,7 +1819,7 @@ void flt_release(flt* of)
   // nodes
   if ( of->hie )
   {
-    // releasing node hierarchy (all except extrefs)
+    // releasing node hierarchy
     flt_release_node(of->hie->node_root);
     flt_safefree(of->hie->node_root);
     flt_safefree(of->hie);
@@ -2285,6 +2285,23 @@ const char* flt_get_face_lightmode(fltu16 lm)
   return lm<4?names[lm]:itoa(lm,tmp,10);
 #else
   return itoa(lm,tmp,10);
+#endif
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+const char* flt_get_header_flags_name(flti32 flags)
+{
+  static char tmp[64];
+#ifndef FLT_NO_OPNAMES
+  *tmp='['; *(tmp+1)=0;  
+  if ( flags & (1<<31) )  sprintf(tmp, "%s%s", tmp, "0" );
+  if ( flags & (1<<30) )  sprintf(tmp, "%s | %s", tmp, "1");
+  if ( flags & (1<<29) )  sprintf(tmp, "%s | %s", tmp, "2" );
+  sprintf(tmp, "%s]", tmp );
+  return tmp;
+#else
+  return itoa(flags,tmp,16);
 #endif
 }
 
