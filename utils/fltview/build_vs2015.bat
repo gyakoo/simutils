@@ -1,5 +1,5 @@
 @echo off
-echo == Building for VS2012 ==
+echo == Building for VS2015 ==
 echo.
 set PREMAKECMD=premake5.exe
 
@@ -15,7 +15,7 @@ premake5 --file=premake5.lua vs2015
 
 :end
 
-xcopy ..\..\extern\vld\bin\Win32\*.* buildvs2012\bin\x32\debug\ /Y
-xcopy ..\..\extern\vld\bin\Win64\*.* buildvs2012\bin\x64\debug\ /Y
+xcopy ..\..\extern\vld\bin\Win32\*.* buildvs2015\bin\x32\debug\ /Y
+xcopy ..\..\extern\vld\bin\Win64\*.* buildvs2015\bin\x64\debug\ /Y
 echo.
 pause
