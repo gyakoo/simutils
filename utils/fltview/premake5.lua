@@ -5,7 +5,8 @@ solution "fltview"
 	location ( build )
 	configurations { "Debug", "Release" }
 	platforms {"x64", "x32"}
-  
+    buildoptions { "/MP8" }
+    
   	project "fltview_dx11"
 		kind "ConsoleApp"
 		language "C++"

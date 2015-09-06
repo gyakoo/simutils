@@ -20,24 +20,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
- */
+*/
 
 #ifndef _VIS_H_
 #define _VIS_H_
 
-#if defined(VIS_DX11)
-#pragma warning(disable:4005)
-# include <d3d11.h>
-# include <d3dx11.h>
-# include <d3dcompiler.h>
-# include <xnamath.h>
-# include <xinput.h>
-# pragma warning(default:4005)
-#elif defined(VIS_GL)
-# include <glfw3.h>
-#endif
-
-#ifdef VIS_GUI
+#if defined(VIS_GUI) && !defined(VIS_DX12)
 #include <imgui.h>
 # if defined(VIS_DX11)
 # include <imgui_impl_dx11.h>
@@ -72,6 +60,7 @@ SOFTWARE.
 
 #define vis_unused(p) (p)=(p)
 #define vis_safefree(p) { if (p){ vis_free(p); (p)=0; } }
+#define vis_saferelease(p){ if (p){ p->Release(); (p)=0;} }
 #ifdef VIS_NO_MEMOUT_CHECK
 #define vis_mem_check(p)
 #else
@@ -85,7 +74,6 @@ SOFTWARE.
 //// ERROR CODES /////
 #define VIS_OK (0)
 #define VIS_FAIL (-1)
-#define VIS_ERR_INIT (1)
 
 #ifndef viscalar
 #define viscalar float
@@ -108,45 +96,24 @@ extern "C" {
   typedef viscalar vis3x3[9];
   typedef viscalar vis4x4[16];
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-//                                  DIRECTX 11 (HEADER)
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-#if defined(VIS_DX11)
-
-  typedef struct vis
-  {
-    ID3D11Device* d3d11device;
-  }vis;
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-//                                  OPENGL (HEADER)
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-#elif defined(VIS_GL)
-
-  typedef struct vis
-  {
-    GLFWwindow* window;
-    const GLFWvidmode* mode;
-  }vis;
-  
-
-#endif // VIS_DX11 else VIS_GL
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-//                                COMMON (HEADER)
-////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////
+  //                                COMMON (HEADER)
+  ////////////////////////////////////////////////////////////////////////////////////////////////////
+  typedef struct vis;
   typedef struct vis_opts
   {
     int   width;
     int   height;
     char* title;
+#if (defined(VIS_DX11) || defined(VIS_DX12))
+    int   use_warpdevice;
+    int   debug_layer;
+    HWND  hwnd;
+    HINSTANCE hInstance;
+#endif
   }vis_opts;
 
-  typedef struct vis_camera 
+  typedef struct vis_camera
   {
     vis4x4  proj;
     vis3x3  view;
@@ -159,166 +126,31 @@ extern "C" {
   int vis_end_frame(vis* vi);
   void vis_release(vis** vi);
 
-/* ************************************************************************************************ */
-/* ************************************************************************************************ */
-/* ************************************************************************************************ */
-/* ************************************************************************************************ */
-  #ifdef __cplusplus
+  /* ************************************************************************************************ */
+  /* ************************************************************************************************ */
+  /* ************************************************************************************************ */
+  /* ************************************************************************************************ */
+#ifdef __cplusplus
 };
 #endif
 
-#ifdef VIS_IMPLEMENTATION
+#if defined(VIS_DX11) || defined(VIS_DX12)
+int vwin_create_window(vis_opts* opts);
+#endif
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-//                                  IMPLEMENTATION - DX11
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
 #if defined(VIS_DX11)
-
-int vis_init_plat(vis* vi, vis_opts* opts)
-{
-  vis_unused(vi);
-  vis_unused(opts);
-
-  return VIS_FAIL;
-}
-
-void vis_release_plat(vis* vi)
-{
-  vis_unused(vi);
-}
-///////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////
-int vis_begin_frame_plat(vis* vi)
-{
-  vis_unused(vi);
-  return VIS_OK;
-}
-
-///////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////
-void vis_render_frame_plat(vis* vi)
-{
-  vis_unused(vi);
-}
-
-///////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////
-int vis_end_frame_plat(vis* vi)
-{
-  vis_unused(vi);
-  return VIS_OK;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-//                                  IMPLEMENTATION - OPENGL
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
+#pragma warning(disable:4005)
+# include "vis_dx11.h"
+# pragma warning(default:4005)
 #elif defined(VIS_GL)
-void vis_gl_render_frame(GLFWwindow* window, int w, int h);
+# include <glfw3.h>
+# include "vis_gl.h"
+#elif defined(VIS_DX12)
+#include "vis_dx12.h"
+#endif
 
-///////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////
-int vis_init_plat(vis* vi, vis_opts* opts)
-{
-  GLint i=1;
 
-  if (!glfwInit())
-    return VIS_ERR_INIT;
-
-  vi->mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
-  vi->window = glfwCreateWindow(opts->width, opts->height, opts->title, NULL, NULL);
-  if (!vi->window)
-  {
-    glfwTerminate();
-    return VIS_ERR_INIT;
-  }
-  glfwSetFramebufferSizeCallback(vi->window, vis_gl_render_frame);
-  glfwMakeContextCurrent(vi->window);
-  glfwSwapInterval(1);
-
-  glEnable(GL_POINT_SMOOTH);
-  glEnable(GL_LINE_SMOOTH);  
-  glClearColor (0.0, 0.0, 0.0, 0.0);
-  glShadeModel (GL_SMOOTH);
-
-  glLoadIdentity();
-//   glMaterialfv(GL_FRONT, GL_SPECULAR, mat_specular);
-//   glMaterialfv(GL_FRONT, GL_SHININESS, mat_shininess);
-//   glLightfv(GL_LIGHT0, GL_POSITION, light_position);
-  glLightModeliv(GL_LIGHT_MODEL_TWO_SIDE, &i ); // two-sided lighting
-
-  glEnable(GL_LIGHTING);
-  glEnable(GL_LIGHT0);
-  glEnable(GL_DEPTH_TEST);
-  glEnable(GL_NORMALIZE);
-
-  return VIS_OK;
-}
-
-///////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////
-void vis_release_plat(vis* vi)
-{
-  glfwDestroyWindow(vi->window);
-  glfwTerminate();
-}
-
-///////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////
-void vis_gl_render_frame(GLFWwindow* window, int w, int h)
-{
-  int width = 0, height = 0;
-
-  vis_unused(w); vis_unused(h);
-  glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-  glfwGetFramebufferSize(window, &width, &height);
-  glViewport(0, 0, width, height);
-  glClearColor(20.0f/255.0f, 20.0f/255.0f, 90.0f/255.0f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
-  glEnable(GL_BLEND);
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  glDisable(GL_TEXTURE_2D);
-  glMatrixMode(GL_PROJECTION);
-  glLoadIdentity();
-  glOrtho(-10, 10, -10, 10, -1, 1);
-  glMatrixMode(GL_MODELVIEW);
-  glLoadIdentity();
-  //glDisable(GL_DEPTH_TEST);
-  glColor4ub(240,240,240,255);
-  glEnable(GL_BLEND);
-  glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);  
-}
-
-///////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////
-int vis_begin_frame_plat(vis* vi)
-{
-  if ( glfwWindowShouldClose(vi->window) )
-    return VIS_FAIL;
-
-  return VIS_OK;
-}
-
-///////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////
-void vis_render_frame_plat(vis* vi)
-{
-  vis_gl_render_frame(vi->window,0,0);
-}
-
-///////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////
-int vis_end_frame_plat(vis* vi)
-{
-  glfwSwapBuffers(vi->window);
-  glfwPollEvents();
-  return VIS_OK;
-}
-
-#endif // VIS_GL
+#ifdef VIS_IMPLEMENTATION
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                IMPLEMENTATION - COMMON
@@ -327,7 +159,7 @@ int vis_init(vis** vi, vis_opts* opts)
 {
   *vi = (vis*)vis_malloc(sizeof(vis));
   vis_mem_check(*vi);
-  return vis_init_plat(*vi,opts);
+  return vis_init_plat(*vi, opts);
 }
 
 void vis_release(vis** vi)
@@ -350,6 +182,61 @@ int vis_end_frame(vis* vi)
 {
   return vis_end_frame_plat(vi);
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#if defined(VIS_DX11) || defined(VIS_DX12)
+LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+int vwin_create_window(vis_opts* opts)
+{
+  // Initialize the window class.
+  WNDCLASSEXA windowClass = { 0 };
+  windowClass.cbSize = sizeof(WNDCLASSEX);
+  windowClass.style = CS_HREDRAW | CS_VREDRAW;
+  windowClass.lpfnWndProc = WindowProc;
+  windowClass.hInstance = opts->hInstance;
+  windowClass.hCursor = LoadCursor(NULL, IDC_ARROW);
+  windowClass.lpszClassName = "vis_window_class";
+  RegisterClassEx(&windowClass);
+
+  RECT windowRect = { 0, 0, static_cast<LONG>(opts->width), static_cast<LONG>(opts->height) };
+  AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
+
+  // Create the window and store a handle to it.
+  opts->hwnd = CreateWindowExA(NULL,
+    "vis_window_class",
+    opts->title,
+    WS_OVERLAPPEDWINDOW,
+    opts->width,
+    opts->height,
+    windowRect.right - windowRect.left,
+    windowRect.bottom - windowRect.top,
+    NULL,		// We have no parent window, NULL.
+    NULL,		// We aren't using menus, NULL.
+    opts->hInstance,
+    NULL);		// We aren't using multiple windows, NULL.
+
+  ShowWindow(opts->hwnd, SW_SHOW);
+  return VIS_OK;
+}
+
+LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+  // Handle destroy/shutdown messages.
+  switch (message)
+  {
+  case WM_DESTROY:
+    PostQuitMessage(0);
+    return 0;
+  }
+
+  // Handle any messages the switch statement didn't.
+  return DefWindowProc(hWnd, message, wParam, lParam);
+}
+
+
+#endif
+
 
 #endif // VIS_IMPLEMENTATION
 

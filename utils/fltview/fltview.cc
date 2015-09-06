@@ -208,9 +208,9 @@ void read_with_callbacks_mt(const char* filename)
   tp.numThreads = std::thread::hardware_concurrency();
   tp.init();
 
-  // configuring read options
-  opts->palflags = FLT_OPT_PAL_ALL;
-  opts->hieflags = FLT_OPT_HIE_ALL_NODES;
+  // configuring read options 
+  opts->pflags = FLT_OPT_PAL_ALL;
+  opts->hflags = FLT_OPT_HIE_ALL_NODES;
   opts->dfaces_size = 1543;
   opts->cb_extref = fltCallbackExtRef;
   opts->cb_user_data = &tp;
@@ -229,7 +229,7 @@ void read_with_callbacks_mt(const char* filename)
   char tmp[256]; 
   sprintf_s(tmp, "Time: %.4g secs", (fltGetTime()-t0)/1000.0);
   printf( "\n%s\n",tmp);
-  printf("nfiles total: %d\n", tp.nfiles);
+  printf("nfiles total: %d\n", (int)tp.nfiles);
   printf("nfaces total : %d\n", TOTALNFACES);
 #ifdef FLT_UNIQUE_FACES
   printf("nfaces unique: %d\n", TOTALUNIQUEFACES);
@@ -238,7 +238,7 @@ void read_with_callbacks_mt(const char* filename)
 
   {
     vis* v;
-    vis_opts opts;
+    vis_opts opts = { 0 };
     opts.width = 1024;
     opts.height= 768;
     opts.title="fltview";

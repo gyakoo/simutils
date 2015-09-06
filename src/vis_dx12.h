@@ -25,6 +25,11 @@ SOFTWARE.
 #ifndef _VIS_DX12_H_
 #define _VIS_DX12_H_
 
+#include <d3d12.h>
+#include <dxgi1_4.h>
+#include <D3Dcompiler.h>
+#include <DirectXMath.h>
+
 #ifndef __D3DX12_H__
 #define __D3DX12_H__
 
@@ -1546,3 +1551,205 @@ inline ID3D12CommandList * const * CommandListCast(ID3D12GraphicsCommandList * c
 
 #endif //__D3DX12_H__
 
+#define VDX12_FRAMECOUNT 2
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+  typedef struct vis
+  {
+    ID3D12Device* d3d12device;
+    ID3D12CommandQueue* cmdqueue;
+    ID3D12CommandAllocator* cmdalloc;
+    IDXGISwapChain3* swapchain;
+    ID3D12DescriptorHeap* rtvheap;
+    ID3D12Resource* render_target[VDX12_FRAMECOUNT];
+    unsigned int framendx;
+    unsigned int rtvheap_descsize;
+  }vis;
+
+#ifdef __cplusplus
+};
+#endif
+
+#ifdef VIS_IMPLEMENTATION
+
+// forward declarations
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#define vdx12_throwfailed(hr) { if (FAILED(hr)) throw; }
+void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, _Outptr_result_maybenull_ IDXGIAdapter1** ppAdapter);
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+int vis_init_plat(vis* vi, vis_opts* opts)
+{
+  vdx12_throwfailed(vwin_create_window(opts));
+
+#ifdef _DEBUG
+  if (opts->debug_layer)
+  {
+    // Enable the D3D12 debug layer.
+    ID3D12Debug* debugController;    
+    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
+    {
+      debugController->EnableDebugLayer();
+    }
+    vis_saferelease(debugController);
+  }
+#endif
+
+  // factory
+  IDXGIFactory4* factory;
+  vdx12_throwfailed(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
+
+  // warp device or hardware accelerated?
+  if ( opts->use_warpdevice )
+  {
+    IDXGIAdapter* warpAdapter;
+    vdx12_throwfailed(factory->EnumWarpAdapter(IID_PPV_ARGS(&warpAdapter)));
+    vdx12_throwfailed(D3D12CreateDevice(warpAdapter, D3D_FEATURE_LEVEL_11_0, 
+      IID_PPV_ARGS(&vi->d3d12device) ));
+    vis_saferelease(warpAdapter);
+  }
+  else
+  {
+    IDXGIAdapter1* hardwareAdapter;
+    vdx12_getHardwareAdapter(factory, &hardwareAdapter);
+    vdx12_throwfailed(D3D12CreateDevice(hardwareAdapter, D3D_FEATURE_LEVEL_11_0,
+      IID_PPV_ARGS(&vi->d3d12device) ));
+    vis_saferelease(hardwareAdapter);
+  }
+
+  // Describe and create the command queue.
+  D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+  queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+  queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+
+  vdx12_throwfailed(vi->d3d12device->CreateCommandQueue(&queueDesc, 
+    IID_PPV_ARGS(&vi->cmdqueue)));
+
+  // Describe and create the swap chain.
+  DXGI_SWAP_CHAIN_DESC swapChainDesc = {};
+  swapChainDesc.BufferCount = VDX12_FRAMECOUNT;
+  swapChainDesc.BufferDesc.Width = opts->width;
+  swapChainDesc.BufferDesc.Height = opts->height;
+  swapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+  swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+  swapChainDesc.OutputWindow = opts->hwnd;
+  swapChainDesc.SampleDesc.Count = 1;
+  swapChainDesc.Windowed = TRUE;
+
+  IDXGISwapChain* swapChain;
+  vdx12_throwfailed(factory->CreateSwapChain(
+    vi->cmdqueue,		// Swap chain needs the queue so that it can force a flush on it.
+    &swapChainDesc,
+    &swapChain ));
+
+  vdx12_throwfailed( swapChain->QueryInterface(__uuidof(IDXGISwapChain3), 
+    (void**)&vi->swapchain) );
+  vi->framendx = vi->swapchain->GetCurrentBackBufferIndex();
+
+  // Create descriptor heaps
+  {
+    // Describe and create a render target view (RTV) descriptor heap.
+    D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+    rtvHeapDesc.NumDescriptors = VDX12_FRAMECOUNT;
+    rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    vdx12_throwfailed(vi->d3d12device->CreateDescriptorHeap(&rtvHeapDesc, 
+      IID_PPV_ARGS(&vi->rtvheap)));
+    vi->rtvheap_descsize = vi->d3d12device->GetDescriptorHandleIncrementSize(
+      D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+  }
+
+  // Create frame resources, render targets
+  {
+    CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(vi->rtvheap->GetCPUDescriptorHandleForHeapStart());
+
+    // Create a RTV for each frame.
+    for (UINT n = 0; n < VDX12_FRAMECOUNT; n++)
+    {
+      vdx12_throwfailed(vi->swapchain->GetBuffer(n, IID_PPV_ARGS(&vi->render_target[n])));
+      vi->d3d12device->CreateRenderTargetView(vi->render_target[n], nullptr, rtvHandle);
+      rtvHandle.Offset(1, vi->rtvheap_descsize);
+    }
+  }
+  vdx12_throwfailed(vi->d3d12device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, 
+    IID_PPV_ARGS(&vi->cmdalloc)));
+
+  // release temp objects
+  vis_saferelease(swapChain);
+  vis_saferelease(factory);
+  return VIS_OK;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void vis_release_plat(vis* vi)
+{
+  vis_saferelease(vi->cmdalloc);
+  for (int i = 0; i < VDX12_FRAMECOUNT; ++i)
+    vis_saferelease(vi->render_target[i]);
+  vis_saferelease(vi->rtvheap);
+  vis_saferelease(vi->swapchain);
+  vis_saferelease(vi->cmdqueue);
+  vis_saferelease(vi->d3d12device);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+int vis_begin_frame_plat(vis* vi)
+{
+  return VIS_OK;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void vis_render_frame_plat(vis* vi)
+{
+
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+int vis_end_frame_plat(vis* vi)
+{
+  return VIS_OK;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, _Outptr_result_maybenull_ IDXGIAdapter1** ppAdapter)
+{
+  IDXGIAdapter1* pAdapter = nullptr;
+  *ppAdapter = nullptr;
+
+  for (UINT adapterIndex = 0; DXGI_ERROR_NOT_FOUND != pFactory->EnumAdapters1(adapterIndex, &pAdapter); ++adapterIndex)
+  {
+    DXGI_ADAPTER_DESC1 desc;
+    pAdapter->GetDesc1(&desc);
+
+    if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+    {
+      // Don't select the Basic Render Driver adapter.
+      // If you want a software adapter, pass in "/warp" on the command line.
+      continue;
+    }
+
+    // Check to see if the adapter supports Direct3D 12, but don't create the
+    // actual device yet.
+    if (SUCCEEDED(D3D12CreateDevice(pAdapter, D3D_FEATURE_LEVEL_11_0, _uuidof(ID3D12Device), nullptr)))
+    {
+      break;
+    }
+  }
+  *ppAdapter = pAdapter;
+}
+
+#endif
+
+
+#endif // _VIS_DX12_H_
