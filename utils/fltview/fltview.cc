@@ -236,13 +236,15 @@ void read_with_callbacks_mt(const char* filename)
 #endif
   printf("nindices total: %d\n", TOTALINDICES);
 
+  // RENDERING
   {
     vis* v;
-    vis_opts opts = { 0 };
-    opts.width = 1024;
-    opts.height= 768;
-    opts.title="fltview";
-    if ( vis_init(&v,&opts) == VIS_OK )
+    vis_opts vopts = { 0 };
+    vopts.width = 1024;
+    vopts.height= 768;
+    vopts.title="fltview";
+    vopts.debug_layer = 1;
+    if ( vis_init(&v,&vopts) == VIS_OK )
     {
       while( vis_begin_frame(v) == VIS_OK )
       {
@@ -252,6 +254,7 @@ void read_with_callbacks_mt(const char* filename)
       vis_release(&v);
     }
   }
+
   flt_release(of);
   flt_safefree(of);
   flt_safefree(opts);

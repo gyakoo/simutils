@@ -56,6 +56,8 @@ SOFTWARE.
 # else
 # define vis_break { raise(SIGTRAP); }
 # endif
+#else
+# define vis_break
 #endif
 
 #define vis_unused(p) (p)=(p)
@@ -79,27 +81,34 @@ SOFTWARE.
 #define viscalar float
 #endif
 
+//////////////////////////////////////////////////////////////////////////////
+//////////////////////////// RESOURCE TYPES //////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+#define VIS_NOFLAGS 0
+#define VIS_LOAD_SOURCE_MEMORY 0
+#define VIS_LOAD_SOURCE_FILE 1
+
+#define VIS_TYPE_VERTEXBUFFER 1
+#define VIS_TYPE_INDEXBUFFER 2
+#define VIS_TYPE_SHADER 3
+#define VIS_TYPE_PIPELINE 4
+#define VIS_TYPE_INPUT_LAYOUT 5
+#define VIS_TYPE_GPU_LAYOUT 6
+#define VIS_TYPE_COMMAND_LIST 7
+#define VIS_TYPE_FENCE 8
+#define VIS_TYPE_STAGING_RES 9
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-  typedef unsigned char  visu8;
-  typedef unsigned short visu16;
-  typedef unsigned int   visu32;
-  typedef unsigned long long visu64;
-  typedef char  visi8;
-  typedef short visi16;
-  typedef int   visi32;
-  typedef long long visi64;
   typedef viscalar vis3[3];
   typedef viscalar vis4[4];
   typedef viscalar vis3x3[9];
   typedef viscalar vis4x4[16];
 
-  ////////////////////////////////////////////////////////////////////////////////////////////////////
-  //                                COMMON (HEADER)
-  ////////////////////////////////////////////////////////////////////////////////////////////////////
-  typedef struct vis;
+  struct vis;
+  ////////////////////////////////////////////////
   typedef struct vis_opts
   {
     int   width;
@@ -107,12 +116,12 @@ extern "C" {
     char* title;
 #if (defined(VIS_DX11) || defined(VIS_DX12))
     int   use_warpdevice;
-    int   debug_layer;
     HWND  hwnd;
     HINSTANCE hInstance;
 #endif
   }vis_opts;
 
+  ////////////////////////////////////////////////
   typedef struct vis_camera
   {
     vis4x4  proj;
@@ -120,11 +129,57 @@ extern "C" {
     vis3    pos;
   }vis_camera;
 
+  ////////////////////////////////////////////////
+  typedef struct vis_pipeline_desc
+  {
+
+  }vis_pipeline_desc;
+
+  ////////////////////////////////////////////////
+  typedef struct vis_id
+  {
+    uint16_t type;
+    uint16_t subtype;
+    uint32_t value;
+  };
+
+  typedef struct vis_sbc;
+
+  typedef vis_id vis_resource;  
+  typedef vis_id vis_staging;
+
+  ////////////////////////////////////////////////
   int vis_init(vis** vi, vis_opts* opts);
   int vis_begin_frame(vis* vi);
   void vis_render_frame(vis* vi);
   int vis_end_frame(vis* vi);
   void vis_release(vis** vi);
+  
+  ////////////////////////////////////////////////
+  vis_resource vis_create_resource(vis* vi, uint16_t type, void* resData, uint32_t flags);  
+
+  ////////////////////////////////////////////////
+  uint32_t vis_shader_compile(vis* vi, uint32_t loadSrc, void* srcData, uint32_t srcSize, vis_sbc** outByteCode );
+  void vis_release_sbc(vis* vi, vis_sbc** byteCode);
+
+  ////////////////////////////////////////////////
+  uint32_t vis_command_list_record(vis* vi, vis_command_list cl);
+  vis_staging vis_command_list_resource_update(vis* vi, vis_command_list cl, vis_resource res, void* inData, uint32_t inSize);
+  uint32_t vis_command_list_release_update(vis* vi, vis_staging stag);
+  uint32_t vis_command_list_close(vis* vi, vis_command_list cl);
+  uint32_t vis_command_list_execute(vis* vi, vis_command_list* lists, uint32_t count);
+
+  ////////////////////////////////////////////////
+  void vis_sync_gpu_to_signal();
+  void vis_sync_cpu_wait_for_signal();
+  void vis_sync_cpu_callback_when_signal();
+
+  ////////////////////////////////////////////////
+  void vis_release_descriptor();
+  void vis_release_resource();
+  void vis_release_pipeline();
+  void vis_release_command_list();
+
 
   /* ************************************************************************************************ */
   /* ************************************************************************************************ */
@@ -153,7 +208,7 @@ int vwin_create_window(vis_opts* opts);
 #ifdef VIS_IMPLEMENTATION
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-//                                IMPLEMENTATION - COMMON
+//                                COMMON IMPLEMENTATION
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 int vis_init(vis** vi, vis_opts* opts)
 {
@@ -168,32 +223,18 @@ void vis_release(vis** vi)
   vis_safefree(*vi);
 }
 
-int vis_begin_frame(vis* vi)
-{
-  return vis_begin_frame_plat(vi);
-}
-
-void vis_render_frame(vis* vi)
-{
-  return vis_render_frame_plat(vi);
-}
-
-int vis_end_frame(vis* vi)
-{
-  return vis_end_frame_plat(vi);
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////
+// WINDOWS - vwin_create_window
+///////////////////////////////////////////////////////////////////
 #if defined(VIS_DX11) || defined(VIS_DX12)
-LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+LRESULT CALLBACK vwin_proc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 int vwin_create_window(vis_opts* opts)
 {
   // Initialize the window class.
   WNDCLASSEXA windowClass = { 0 };
   windowClass.cbSize = sizeof(WNDCLASSEX);
   windowClass.style = CS_HREDRAW | CS_VREDRAW;
-  windowClass.lpfnWndProc = WindowProc;
+  windowClass.lpfnWndProc = vwin_proc;
   windowClass.hInstance = opts->hInstance;
   windowClass.hCursor = LoadCursor(NULL, IDC_ARROW);
   windowClass.lpszClassName = "vis_window_class";
@@ -220,7 +261,10 @@ int vwin_create_window(vis_opts* opts)
   return VIS_OK;
 }
 
-LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+///////////////////////////////////////////////////////////////////////
+// WINDOWS - vwin_proc
+///////////////////////////////////////////////////////////////////////
+LRESULT CALLBACK vwin_proc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
   // Handle destroy/shutdown messages.
   switch (message)

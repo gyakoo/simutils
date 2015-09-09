@@ -33,8 +33,6 @@ SOFTWARE.
 #ifndef __D3DX12_H__
 #define __D3DX12_H__
 
-#include "d3d12.h"
-
 #if defined( __cplusplus )
 
 struct CD3DX12_DEFAULT {};
@@ -1564,8 +1562,14 @@ extern "C" {
     IDXGISwapChain3* swapchain;
     ID3D12DescriptorHeap* rtvheap;
     ID3D12Resource* render_target[VDX12_FRAMECOUNT];
-    unsigned int framendx;
-    unsigned int rtvheap_descsize;
+    ID3D12RootSignature* root_sig;
+    ID3D12Fence* fence;
+    UINT64 fence_value;
+    HANDLE fence_event;
+    float aspect_ratio;
+    UINT framendx;
+    UINT rtvheap_descsize;
+    MSG msg;
   }vis;
 
 #ifdef __cplusplus
@@ -1578,7 +1582,10 @@ extern "C" {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #define vdx12_throwfailed(hr) { if (FAILED(hr)) throw; }
-void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, _Outptr_result_maybenull_ IDXGIAdapter1** ppAdapter);
+void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, _Outptr_result_maybenull_ IDXGIAdapter1** ppAdapter, _Out_ D3D_FEATURE_LEVEL* featLevel);
+void vdx12_wait_previous_frame(vis* vi);
+int vdx12_init_pipeline_assets(vis* vi);
+void vdx12_release_pipeline_assets(vis* vi);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1587,69 +1594,77 @@ int vis_init_plat(vis* vi, vis_opts* opts)
   vdx12_throwfailed(vwin_create_window(opts));
 
 #ifdef _DEBUG
-  if (opts->debug_layer)
+  // Enable the D3D12 debug layer.
+  ID3D12Debug* debugController;    
+  if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
   {
-    // Enable the D3D12 debug layer.
-    ID3D12Debug* debugController;    
-    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
-    {
-      debugController->EnableDebugLayer();
-    }
-    vis_saferelease(debugController);
+    debugController->EnableDebugLayer();
   }
+  vis_saferelease(debugController);
 #endif
 
   // factory
   IDXGIFactory4* factory;
   vdx12_throwfailed(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
 
-  // warp device or hardware accelerated?
+  // warp or hardware device?
+create_as_warp:
   if ( opts->use_warpdevice )
   {
     IDXGIAdapter* warpAdapter;
     vdx12_throwfailed(factory->EnumWarpAdapter(IID_PPV_ARGS(&warpAdapter)));
-    vdx12_throwfailed(D3D12CreateDevice(warpAdapter, D3D_FEATURE_LEVEL_11_0, 
+    vdx12_throwfailed(D3D12CreateDevice(warpAdapter, D3D_FEATURE_LEVEL_12_1, 
       IID_PPV_ARGS(&vi->d3d12device) ));
     vis_saferelease(warpAdapter);
   }
   else
-  {
-    IDXGIAdapter1* hardwareAdapter;
-    vdx12_getHardwareAdapter(factory, &hardwareAdapter);
-    vdx12_throwfailed(D3D12CreateDevice(hardwareAdapter, D3D_FEATURE_LEVEL_11_0,
-      IID_PPV_ARGS(&vi->d3d12device) ));
+  { 
+    IDXGIAdapter1* hardwareAdapter=nullptr;
+    D3D_FEATURE_LEVEL featLevel;
+    vdx12_getHardwareAdapter(factory, &hardwareAdapter, &featLevel);
+    HRESULT hr = D3D12CreateDevice(hardwareAdapter, featLevel, IID_PPV_ARGS(&vi->d3d12device));
+    if (FAILED(hr))
+    {
+      opts->use_warpdevice = true;
+      goto create_as_warp;
+    }
     vis_saferelease(hardwareAdapter);
   }
 
   // Describe and create the command queue.
-  D3D12_COMMAND_QUEUE_DESC queueDesc = {};
-  queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-  queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+  {
+    D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+    queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+    queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 
-  vdx12_throwfailed(vi->d3d12device->CreateCommandQueue(&queueDesc, 
-    IID_PPV_ARGS(&vi->cmdqueue)));
+    vdx12_throwfailed(vi->d3d12device->CreateCommandQueue(&queueDesc,
+      IID_PPV_ARGS(&vi->cmdqueue)));
+  }
 
   // Describe and create the swap chain.
-  DXGI_SWAP_CHAIN_DESC swapChainDesc = {};
-  swapChainDesc.BufferCount = VDX12_FRAMECOUNT;
-  swapChainDesc.BufferDesc.Width = opts->width;
-  swapChainDesc.BufferDesc.Height = opts->height;
-  swapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-  swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-  swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-  swapChainDesc.OutputWindow = opts->hwnd;
-  swapChainDesc.SampleDesc.Count = 1;
-  swapChainDesc.Windowed = TRUE;
-
   IDXGISwapChain* swapChain;
-  vdx12_throwfailed(factory->CreateSwapChain(
-    vi->cmdqueue,		// Swap chain needs the queue so that it can force a flush on it.
-    &swapChainDesc,
-    &swapChain ));
+  {
+    DXGI_SWAP_CHAIN_DESC swapChainDesc = {};
+    swapChainDesc.BufferCount = VDX12_FRAMECOUNT;
+    swapChainDesc.BufferDesc.Width = opts->width;
+    swapChainDesc.BufferDesc.Height = opts->height;
+    swapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    swapChainDesc.OutputWindow = opts->hwnd;
+    swapChainDesc.SampleDesc.Count = 1;
+    swapChainDesc.Windowed = TRUE;
 
-  vdx12_throwfailed( swapChain->QueryInterface(__uuidof(IDXGISwapChain3), 
-    (void**)&vi->swapchain) );
-  vi->framendx = vi->swapchain->GetCurrentBackBufferIndex();
+    vdx12_throwfailed(factory->CreateSwapChain(
+      vi->cmdqueue,		// Swap chain needs the queue so that it can force a flush on it.
+      &swapChainDesc,
+      &swapChain));
+
+    vdx12_throwfailed(swapChain->QueryInterface(__uuidof(IDXGISwapChain3),
+      (void**)&vi->swapchain));
+    vi->framendx = vi->swapchain->GetCurrentBackBufferIndex();
+  }
+  vi->aspect_ratio = (float)opts->width / opts->height;
 
   // Create descriptor heaps
   {
@@ -1682,13 +1697,17 @@ int vis_init_plat(vis* vi, vis_opts* opts)
   // release temp objects
   vis_saferelease(swapChain);
   vis_saferelease(factory);
-  return VIS_OK;
+
+  return vdx12_init_pipeline_assets(vi);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void vis_release_plat(vis* vi)
 {
+  vdx12_wait_previous_frame(vi);
+
+  vdx12_release_pipeline_assets(vi);
   vis_saferelease(vi->cmdalloc);
   for (int i = 0; i < VDX12_FRAMECOUNT; ++i)
     vis_saferelease(vi->render_target[i]);
@@ -1700,34 +1719,140 @@ void vis_release_plat(vis* vi)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-int vis_begin_frame_plat(vis* vi)
+void vdx12_release_pipeline_assets(vis* vi)
 {
+  vis_saferelease(vi->fence);
+  vis_saferelease(vi->root_sig);
+  CloseHandle(vi->fence_event);
+  vi->fence_event = nullptr;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+int vis_begin_frame(vis* vi)
+{
+  // Process any messages in the queue.
+  if (PeekMessage(&vi->msg, NULL, 0, 0, PM_REMOVE))
+  {
+    TranslateMessage(&vi->msg);
+    DispatchMessage(&vi->msg);
+    if (vi->msg.message == WM_QUIT)
+      return VIS_FAIL;
+  }
+
   return VIS_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-void vis_render_frame_plat(vis* vi)
+void vis_render_frame(vis* vi)
 {
+  /*
+  // Record all the commands we need to render the scene into the command list.
+  PopulateCommandList();
 
+  // Execute the command list.
+  ID3D12CommandList* ppCommandLists[] = { m_commandList.Get() };
+  m_commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+  */
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-int vis_end_frame_plat(vis* vi)
+int vis_end_frame(vis* vi)
 {
+  // Present the frame.
+  vdx12_throwfailed(vi->swapchain->Present(1, 0));
+
+  // WAITING FOR THE FRAME TO COMPLETE BEFORE CONTINUING IS NOT BEST PRACTICE.
+  // This is code implemented as such for simplicity. More advanced samples 
+  // illustrate how to use fences for efficient resource usage.
+  vdx12_wait_previous_frame(vi);
   return VIS_OK;
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+int vdx12_init_pipeline_assets(vis* vi)
+{
+  // Create an empty root signature.
+  {
+    CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
+    rootSignatureDesc.Init(0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+    ID3DBlob *signature, *error;
+    vdx12_throwfailed(D3D12SerializeRootSignature(&rootSignatureDesc, 
+      D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error));
+    vdx12_throwfailed(vi->d3d12device->CreateRootSignature(0, 
+      signature->GetBufferPointer(), signature->GetBufferSize(), 
+      IID_PPV_ARGS(&vi->root_sig)) );
+    vis_saferelease(signature);
+    vis_saferelease(error);
+  }
+
+  // Create the pipeline state, which includes compiling and loading shaders.
+  {
+
+  }
+
+
+  // Create synchronization objects and wait until assets have been uploaded to the GPU.
+  {
+    vdx12_throwfailed(vi->d3d12device->CreateFence(0, D3D12_FENCE_FLAG_NONE, 
+      IID_PPV_ARGS(&vi->fence)));
+    vi->fence_value = 1;
+
+    // Create an event handle to use for frame synchronization.
+    vi->fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (vi->fence_event == nullptr)
+      vdx12_throwfailed(HRESULT_FROM_WIN32(GetLastError()));
+
+    // Wait for the command list to execute; we are reusing the same command 
+    // list in our main loop but for now, we just want to wait for setup to 
+    // complete before continuing.
+    vdx12_wait_previous_frame(vi);
+  }
+  return VIS_OK;
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, _Outptr_result_maybenull_ IDXGIAdapter1** ppAdapter)
+void vdx12_wait_previous_frame(vis* vi)
 {
+  // Signal and increment the fence value.
+  const UINT64 fence = vi->fence_value;
+  vdx12_throwfailed(vi->cmdqueue->Signal(vi->fence, fence));
+  ++vi->fence_value;
+
+  // Wait until the previous frame is finished.
+  if (vi->fence->GetCompletedValue() < fence)
+  {
+    vdx12_throwfailed(vi->fence->SetEventOnCompletion(fence, vi->fence_event));
+    WaitForSingleObject(vi->fence_event, INFINITE);
+  }
+
+  vi->framendx = vi->swapchain->GetCurrentBackBufferIndex();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, 
+  _Outptr_result_maybenull_ IDXGIAdapter1** ppAdapter, 
+  _Out_ D3D_FEATURE_LEVEL* featLevel)
+{
+  D3D_FEATURE_LEVEL featureLevel[] =
+  {
+    D3D_FEATURE_LEVEL_12_1,
+    D3D_FEATURE_LEVEL_12_0,
+    D3D_FEATURE_LEVEL_11_1,
+    D3D_FEATURE_LEVEL_11_0,
+  };
+
   IDXGIAdapter1* pAdapter = nullptr;
   *ppAdapter = nullptr;
+  bool found = false;
 
-  for (UINT adapterIndex = 0; DXGI_ERROR_NOT_FOUND != pFactory->EnumAdapters1(adapterIndex, &pAdapter); ++adapterIndex)
+  for (UINT adapterIndex = 0; !found && DXGI_ERROR_NOT_FOUND != pFactory->EnumAdapters1(adapterIndex, &pAdapter); ++adapterIndex)
   {
     DXGI_ADAPTER_DESC1 desc;
     pAdapter->GetDesc1(&desc);
@@ -1741,9 +1866,14 @@ void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, _Outptr_result_maybe
 
     // Check to see if the adapter supports Direct3D 12, but don't create the
     // actual device yet.
-    if (SUCCEEDED(D3D12CreateDevice(pAdapter, D3D_FEATURE_LEVEL_11_0, _uuidof(ID3D12Device), nullptr)))
+    for (UINT f = 0; f < sizeof(featureLevel) / sizeof(D3D_FEATURE_LEVEL); ++f)
     {
-      break;
+      if (SUCCEEDED(D3D12CreateDevice(pAdapter, featureLevel[f], _uuidof(ID3D12Device), nullptr)))
+      {
+        *featLevel = featureLevel[f];
+        found = true;
+        break;
+      }
     }
   }
   *ppAdapter = pAdapter;
