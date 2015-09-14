@@ -101,6 +101,7 @@ SOFTWARE.
 #define VIS_TYPE_COMMAND_LIST 7
 #define VIS_TYPE_FENCE 8
 #define VIS_TYPE_STAGING_RES 9
+#define VIS_TYPE_RENDER_TARGET 10
 
 #define VIS_FORMAT_UNKNOWN 0
 #define VIS_FORMAT_R32G32B32A32_TYPELESS 1
@@ -310,6 +311,14 @@ SOFTWARE.
 #define VIS_MSAA_QUALITY_STANDARD 0xffffffff
 #define VIS_MSAA_QUALITY_CENTER 0xfffffffe
 
+#define VIS_CLS_SHADER_LAYOUT 0
+#define VIS_CLS_VIEWPORTS 1
+#define VIS_CLS_SCISSORS 2
+#define VIS_CLS_RENDER_TARGETS 3
+#define VIS_CLS_PRIM_TOPOLOGY 4
+#define VIS_CLS_VERTEX_BUFFER 5
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -321,12 +330,26 @@ extern "C" {
 
   struct vis;
   ////////////////////////////////////////////////
+  typedef struct vis_rect
+  {
+    float x, y;
+    float width, height;
+  }vis_rect;
+
+  typedef struct vis_viewport
+  {
+    vis_rect rect;
+    float depth_min;
+    float depth_max;
+  }vis_viewport;
+
+  ////////////////////////////////////////////////
   typedef struct vis_opts
   {
     int   width;
     int   height;
     char* title;
-#if (defined(VIS_DX11) || defined(VIS_DX12))
+#if defined(VIS_DX11) || defined(VIS_DX12)
     int   use_warpdevice;
     HWND  hwnd;
     HINSTANCE hInstance;
@@ -487,25 +510,33 @@ extern "C" {
   
   ////////////////////////////////////////////////
   vis_resource vis_create_resource(vis* vi, uint16_t type, void* resData, uint32_t flags);  
+  void vis_release_resource(vis* vi, vis_resource resource);
 
   ////////////////////////////////////////////////
   uint32_t vis_shader_compile(vis* vi, uint32_t loadSrc, void* srcData, uint32_t srcSize, vis_shader_bytecode* outByteCode );
   void vis_pipeline_state_set_default(vis* vi, vis_pipeline_state* pstate);
 
   ////////////////////////////////////////////////
-  uint32_t vis_command_list_record(vis* vi, vis_resource cmdList);
-  vis_staging vis_command_list_resource_update(vis* vi, vis_resource cmdList, vis_resource res, void* inData, uint32_t inSize);
-  uint32_t vis_command_list_release_update(vis* vi, vis_staging stag);
-  uint32_t vis_command_list_close(vis* vi, vis_resource cmdList);
-  uint32_t vis_command_list_execute(vis* vi, vis_resource* cmdLists, uint32_t count);
+  uint32_t vis_command_list_record(vis* vi, vis_resource cmd_list);
+  uint32_t vis_command_list_close(vis* vi, vis_resource cmd_list);
+  uint32_t vis_command_list_reset(vis* vi, vis_resource cmd_list);
+  uint32_t vis_command_list_set(vis* vi, vis_resource cmd_list, uint32_t cls_state, void* data_state, uint32_t flags);
+  vis_staging vis_command_list_resource_update(vis* vi, vis_resource cmd_list, vis_resource res, void* inData, uint32_t inSize);
+  uint32_t vis_command_list_release_update(vis* vi, vis_resource cmd_list, vis_staging stag);
+  uint32_t vis_command_list_execute(vis* vi, vis_resource* cmd_lists, uint32_t count);
 
   ////////////////////////////////////////////////
-  void vis_sync_gpu_to_signal(vis* vi);
-  void vis_sync_cpu_wait_for_signal(vis* vi);
+  vis_id vis_sync_gpu_to_signal(vis* vi);
+  void vis_sync_cpu_wait_for_signal(vis* vi, vis_id signal);
   void vis_sync_cpu_callback_when_signal(vis* vi);
 
   ////////////////////////////////////////////////
-  void vis_release_resource(vis* vi, vis_resource resource);
+  void vis_rect_make(vis_rect* r, float x, float y, float w, float h);
+
+  ////////////////////////////////////////////////
+  uint32_t vis_get_back_buffer_count(vis* vi);
+  void* vis_get_back_buffer(vis* vi, uint32_t index);
+
 
   /* ************************************************************************************************ */
   /* ************************************************************************************************ */
@@ -548,6 +579,13 @@ void vis_release(vis** vi)
   vis_release_plat(*vi);
   vis_safefree(*vi);
 }
+
+void vis_rect_make(vis_rect* r, float x, float y, float w, float h)
+{
+  r->x = x; r->y = y;
+  r->width = w; r->height = h;
+}
+
 
 ///////////////////////////////////////////////////////////////////
 // WINDOWS - vwin_create_window

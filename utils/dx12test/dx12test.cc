@@ -24,6 +24,8 @@ struct app_assets
   vis_resource vs;
   vis_resource ps;
   vis_resource shader_layout;
+  vis_resource* render_targets;
+  vis_viewport viewport;
 };
 
 struct app_vertex
@@ -52,14 +54,25 @@ int app_load_assets(vis* vi, app_assets* assets)
 
   // Resources (data) - not filling data in yet
   {
+    // vb for triangle
     assets->vb = vis_create_resource(vi, VIS_TYPE_VERTEXBUFFER, nullptr, VIS_NONE);
-    
-    vis_shader_bytecode sbc = { 0 };
-    vis_shader_compile(vi, VIS_LOAD_SOURCE_MEMORY, (void*)vsstr, strlen(vsstr), &sbc);
-    assets->vs = vis_create_resource(vi, VIS_TYPE_SHADER, &sbc, VIS_NONE);
 
-    vis_shader_compile(vi, VIS_LOAD_SOURCE_MEMORY, (void*)psstr, strlen(psstr), &sbc);
-    assets->ps = vis_create_resource(vi, VIS_TYPE_SHADER, &sbc, VIS_NONE);
+    // compile and create vs/ps
+    vis_shader_bytecode vsbytecode = { 0 };
+    vis_shader_bytecode psbytecode = { 0 };
+    vis_shader_compile(vi, VIS_LOAD_SOURCE_MEMORY, (void*)vsstr, strlen(vsstr), &vsbytecode);
+    vis_shader_compile(vi, VIS_LOAD_SOURCE_MEMORY, (void*)psstr, strlen(psstr), &psbytecode);
+    assets->vs = vis_create_resource(vi, VIS_TYPE_SHADER, &vsbytecode, VIS_STAGE_VS);
+    assets->ps = vis_create_resource(vi, VIS_TYPE_SHADER, &psbytecode, VIS_STAGE_PS);
+
+    // create RT with the back buffers
+    const uint32_t bbcount = vis_get_back_buffer_count(vi);
+    assets->render_targets = (vis_resource*)vis_malloc(sizeof(vis_resource)*bbcount);
+    for (uint32_t i = 0; i < bbcount; ++i)
+    {
+      assets->render_targets[i] = vis_create_resource(vi, VIS_TYPE_RENDER_TARGET, 
+        vis_get_back_buffer(vi, i), VIS_NONE);
+    }
   }
 
   // Descriptors (metadata)
@@ -95,11 +108,15 @@ int app_load_assets(vis* vi, app_assets* assets)
 
     // tell gpu to signal once it finishes and wait for it here
     vis_id signal = vis_sync_gpu_to_signal(vi);
-    vis_sync_cpu_wait_for_signal(vi, signal); // vis_sync_cpu_callback_when_signal(vi, signal, cb_func, cb_data);
+    vis_sync_cpu_wait_for_signal(vi, signal); 
 
     // release temporary resources allocated for upload
     vis_command_list_release_update(vi, assets->cmd_list, vbupdate);
   }
+
+  // viewport/scissor rect
+  vis_rect_make(&assets->viewport.rect, 0.0f, 0.0f, (float)vi->width, (float)vi->height);
+  assets->viewport.depth_min = 0.0f; assets->viewport.depth_max = 1.0f;
 
   return VIS_OK;
 }
@@ -112,11 +129,33 @@ void app_unload_assets(vis* vi, app_assets* assets)
   vis_release_resource(vi, assets->vb);
   vis_release_resource(vi, assets->pipeline);
   vis_release_resource(vi, assets->cmd_list);
+  
+  const uint32_t bbcount = vis_get_back_buffer_count(vi);
+  for (uint32_t i = 0; i < bbcount; ++i)
+    vis_release_resource(vi, assets->render_targets[i]);
+  vis_safefree(assets->render_targets);
+}
+
+void app_render(vis* vi, app_assets* assets)
+{
+  // populate command list
+  {
+    vis_command_list_reset(vi, assets->cmd_list);
+    vis_command_list_record(vi, assets->cmd_list);
+
+    vis_command_list_set(vi, assets->cmd_list, VIS_CLS_SHADER_LAYOUT, &assets->shader_layout, VIS_NONE);
+    vis_command_list_set(vi, assets->cmd_list, VIS_CLS_VIEWPORTS, &assets->viewport, 1);
+    vis_command_list_set(vi, assets->cmd_list, VIS_CLS_SCISSORS, &assets->viewport.rect, 1);
+
+    vis_command_list_close(vi, assets->cmd_list);    
+  }
+
+  // execute command list
+  vis_command_list_execute(vi, &assets->cmd_list, 1);
 }
 
 int main(int argc, const char** argv)
 {
-  // RENDERING
   vis* v;
   vis_opts vopts = { 0 };
   vopts.width = 1024;
@@ -130,6 +169,7 @@ int main(int argc, const char** argv)
     {
       while (vis_begin_frame(v) == VIS_OK)
       {
+        app_render(v, &assets);
         vis_render_frame(v);
         vis_end_frame(v);
       }

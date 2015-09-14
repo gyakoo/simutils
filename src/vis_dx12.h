@@ -1570,6 +1570,8 @@ extern "C" {
     UINT framendx;
     UINT rtvheap_descsize;
     MSG msg;
+    UINT width;
+    UINT height;
   }vis;
 
 #ifdef __cplusplus
@@ -1644,6 +1646,8 @@ create_as_warp:
   // Describe and create the swap chain.
   IDXGISwapChain* swapChain;
   {
+    vi->width = (UINT)opts->width;
+    vi->height = (UINT)opts->height;
     DXGI_SWAP_CHAIN_DESC swapChainDesc = {};
     swapChainDesc.BufferCount = VDX12_FRAMECOUNT;
     swapChainDesc.BufferDesc.Width = opts->width;
