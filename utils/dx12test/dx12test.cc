@@ -1,11 +1,12 @@
 
-#pragma warning(disable:4100 4005)
+#pragma warning(disable:4100 4005 4297)
 
 #if defined(_DEBUG) && !defined(_WIN64)
 #include <vld.h>
 #endif
 
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <Windows.h>
 #undef VIS_DX11
@@ -143,9 +144,19 @@ void app_render(vis* vi, app_assets* assets)
     vis_command_list_reset(vi, assets->cmd_list);
     vis_command_list_record(vi, assets->cmd_list);
 
+    // (push) set necessary state
     vis_command_list_set(vi, assets->cmd_list, VIS_CLS_SHADER_LAYOUT, &assets->shader_layout, VIS_NONE);
     vis_command_list_set(vi, assets->cmd_list, VIS_CLS_VIEWPORTS, &assets->viewport, 1);
     vis_command_list_set(vi, assets->cmd_list, VIS_CLS_SCISSORS, &assets->viewport.rect, 1);
+    vis_command_list_set(vi, assets->cmd_list, VIS_CLS_RENDER_TARGETS, &assets->render_targets[vi->framendx], 1);
+
+    // drawing commands
+    vis_cmd_clear clear = { &assets->render_targets[vi->framendx], 1, { 0.0f, 0.2f, 0.4f, 1.0f } };
+    vis_command_list_set(vi, assets->cmd_list, VIS_CLS_CLEAR_RT, &clear, VIS_NONE);
+    vis_command_list_set(vi, assets->cmd_list, VIS_CLS_PRIM_TOPOLOGY, nullptr, VIS_)
+
+    // (pop) necessary state
+    vis_command_list_set(vi, assets->cmd_list, VIS_CLS_RENDER_TARGETS, &assets->render_targets[vi->framendx], -1);
 
     vis_command_list_close(vi, assets->cmd_list);    
   }

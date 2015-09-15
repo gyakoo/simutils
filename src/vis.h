@@ -89,6 +89,8 @@ SOFTWARE.
 #endif
 
 #define VIS_NONE 0
+#define VIS_ENABLED 1
+#define VIS_DISABLED 0
 #define VIS_LOAD_SOURCE_MEMORY 0
 #define VIS_LOAD_SOURCE_FILE 1
 
@@ -290,6 +292,9 @@ SOFTWARE.
 #define VIS_PRIM_TRIANGLE   3
 #define VIS_PRIM_PATCH      4
 
+#define VIS_PRIM_TRIANGLE_LIST 30
+#define VIS_PRIM_TRIANGLE_
+
 #define VIS_COMPFUNC_NEVER 1
 #define VIS_COMPFUNC_LESS 2
 #define VIS_COMPFUNC_EQUAL 3
@@ -317,6 +322,7 @@ SOFTWARE.
 #define VIS_CLS_RENDER_TARGETS 3
 #define VIS_CLS_PRIM_TOPOLOGY 4
 #define VIS_CLS_VERTEX_BUFFER 5
+#define VIS_CLS_CLEAR_RT 6
 
 
 #ifdef __cplusplus
@@ -370,8 +376,10 @@ extern "C" {
     uint16_t type;
     uint16_t subtype;
     uint32_t value;
-  };
+  }vis_id;
 
+  typedef vis_id vis_resource;
+  typedef vis_id vis_staging;
   ////////////////////////////////////////////////
   typedef struct vis_input_element
   {
@@ -396,7 +404,7 @@ extern "C" {
     vis_shader_registers* reg_desc;
     uint32_t reg_desc_count;
     uint32_t stage_flags;             // VIS_STAGE* flags
-  };
+  }vis_shader_layout;
 
   ////////////////////////////////////////////////
   typedef struct vis_blend_target
@@ -498,9 +506,14 @@ extern "C" {
     uint32_t size;
   }vis_sbc;
 
-  typedef vis_id vis_resource;  
-  typedef vis_id vis_staging;
-
+  ////////////////////////////////////////////////
+  typedef struct vis_cmd_clear
+  {
+    vis_resource* rts;
+    uint32_t num_rts;
+    vis4 clear_color;
+  }vis_cmd_clear;
+  
   ////////////////////////////////////////////////
   int vis_init(vis** vi, vis_opts* opts);
   int vis_begin_frame(vis* vi);
@@ -555,7 +568,6 @@ int vwin_create_window(vis_opts* opts);
 # include "vis_dx11.h"
 # pragma warning(default:4005)
 #elif defined(VIS_GL)
-# include <glfw3.h>
 # include "vis_gl.h"
 #elif defined(VIS_DX12)
 #include "vis_dx12.h"
