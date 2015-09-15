@@ -404,6 +404,7 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
     fltXmlIndent(d+2); printf( "<sw_db_y>%g</sw_db_y>\n", of->header->sw_db_y );
     fltXmlIndent(d+2); printf( "<d_db_x>%g</d_db_x>\n", of->header->d_db_x );
     fltXmlIndent(d+2); printf( "<d_db_y>%g</d_db_y>\n", of->header->d_db_y );
+    fltXmlIndent(d+2); printf( "<d_db_z>%g</d_db_z>\n", of->header->d_db_z );
     fltXmlIndent(d+2); printf( "<sw_corner_lat>%g</sw_corner_lat>\n", of->header->sw_corner_lat );
     fltXmlIndent(d+2); printf( "<sw_corner_lon>%g</sw_corner_lon>\n", of->header->sw_corner_lon );
     fltXmlIndent(d+2); printf( "<ne_corner_lat>%g</ne_corner_lat>\n", of->header->ne_corner_lat );
@@ -414,7 +415,6 @@ void fltXmlOfPrint(flt* of, int d, std::set<uint64_t>& done, int* tot_nodes, flt
     fltXmlIndent(d+2); printf( "<lbt_low_lat>%g</lbt_low_lat>\n", of->header->lbt_low_lat );
     fltXmlIndent(d+2); printf( "<earth_ellip_model>%s</earth_ellip_model>\n", flt_get_earth_ellip_name(of->header->earth_ellip_model) );
     fltXmlIndent(d+2); printf( "<utm_zone>%d</utm_zone>\n", of->header->utm_zone );
-    fltXmlIndent(d+2); printf( "<d_db_z>%g</d_db_z>\n", of->header->d_db_z );
     fltXmlIndent(d+2); printf( "<radius>%g</radius>\n", of->header->radius );
     fltXmlIndent(d+2); printf( "<earth_major_axis>%g</earth_major_axis>\n", of->header->earth_major_axis );
     fltXmlIndent(d+2); printf( "<earth_minor_axis>%g</earth_minor_axis>\n", of->header->earth_minor_axis );

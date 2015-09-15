@@ -9,11 +9,10 @@ solution "fltmlod"
   	project "fltmlod"
 		kind "ConsoleApp"
 		language "C++"
-		files { "fltmlod.cc", "../../src/flt.h" }
-		includedirs { "./", "../../src/", "../../extern/vld/include/"}
+		files { "fltmlod.cc", "../../src/flt.h", "../../extern/tinyxml2/tinyxml2.cpp", "../../extern/tinyxml2/tinyxml2.h" }
+		includedirs { "./", "../../src/", "../../extern/vld/include/", "../../extern/tinyxml2/"}
 	 		
-		configuration { "windows" }   
-            defines { "FLT_ONLY_PARSER" }
+		configuration { "windows" }               
 			links { "user32" }
 		
 	    configuration { "Debug", "x32" }

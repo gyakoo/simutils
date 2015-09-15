@@ -25,12 +25,39 @@
 #include <deque>
 #include <thread>
 #include <vector>
+#include <tinyxml2.h>
 #pragma warning(disable:4100 4005 4996)
 
-struct lod
+struct lod_def
 {
-  flt_node_group* groupnode;
-  std::vector<std::string> xrefs;
+  std::string id;
+  double range[2];
+};
+
+struct lod_tile
+{
+  std::string id;
+  std::vector<std::string> files;
+};
+
+struct tile_def
+{
+  std::string filename;
+  std::vector<lod_tile> lodtiles;  
+};
+
+struct mlod_def
+{
+  std::map<std::string, lod_def*> lods;
+  std::vector<tile_def*> tiles;
+
+  void release()
+  {
+    for ( auto it = lods.begin(); it != lods.end(); ++it ) delete it->second;
+    for (size_t i = 0; i < tiles.size(); ++i ) delete tiles[i];
+    lods.clear();
+    tiles.clear();
+  }
 };
 
 void prepare_header(flt_header* h)
@@ -48,152 +75,167 @@ void prepare_header(flt_header* h)
   h->db_orig = 100;    
 }
 
-void open_add_lod(const std::string& lff, int i, std::vector<lod>& lods)
+void prepare_hie(flt_hie* hie)
 {
-  char tmp[512];
-  sprintf_s(tmp, lff.c_str(), i);
-  FILE* f=fopen(tmp,"rt");
-  if ( !f ) return;
-  lod l;
-  char* start;
-  l.groupnode = (flt_node_group*)flt_node_create(0,FLT_NODE_GROUP,FLT_NULL);
-  double sio[2]={0};
-  double cen[3]={0};
-  double ran=0.0;
-  while (fgets(tmp,512,f))
-  {
-    start = tmp;
-    while (*start==' '||*start=='\t')
-      ++start;
-    if (*start)
-    {
-      for (int i=0;i<512;++i){ if (tmp[i]=='\n'||tmp[i]=='\r'){ tmp[i]=0;break; } }
-      l.xrefs.push_back(start);
-    }
-  }
-  fclose(f);
-  lods.push_back(l);
+  
 }
 
-void prepare_hie(flt_hie* hie, const std::string& lff)
+bool write_files(const mlod_def& def, const std::string& outdir, bool force)
 {
-  std::vector<lod> lods;
-  for ( int i = 0; i < 10; ++i )
-    open_add_lod(lff,i,lods);
-
-  // root -> g1 -> lod -> {glod0, glod1, glod2...} -> {xrefs...}
-  hie->node_root = flt_node_create(0,FLT_NODE_BASE,"root");
-  flt_node_group* group = (flt_node_group*)flt_node_create(0,FLT_NODE_GROUP,"g1");
-  hie->node_root->child_head = (flt_node*)group;
-  flt_node_lod* lodnode = (flt_node_lod*)flt_node_create(0,FLT_NODE_LOD, "lod");
-  group->base.child_head = (flt_node*)lodnode;
-  lodnode->switch_in = s_in;
-  lodnode->switch_out = s_out;
-  for(int i=0;i<3;++i ) lodnode->cnt_coords[i] = center[i];
-  lodnode->trans_range = trange;
-  lodnode->sig_size = sigsize;
-
-  flt_node_group* last=FLT_NULL;
-  for ( size_t i = 0; i < lods.size();++i)
-  {
-    lod& l = lods[i];
-    
-    // if first group among children
-    if ( !last )
-    {
-      last = l.groupnode;
-      lodnode->base.child_head = (flt_node*)last;
-    }
-    else
-    {
-      // it's next sibling group
-      last->base.next = (flt_node*)l.groupnode;
-      last = l.groupnode;
-    }
-
-    // all children xrefs
-    flt_node_extref* lastxref=FLT_NULL;
-    for ( size_t j = 0; j < l.xrefs.size(); ++j )
-    {
-      flt_node_extref* newxref= (flt_node_extref*)flt_node_create(0,FLT_NODE_EXTREF,FLT_NULL);
-      newxref->base.type = FLT_NODE_EXTREF;
-      if ( !lastxref )
-      {
-        lastxref = newxref;
-        last->base.child_head = (flt_node*)lastxref;
-      }
-      else
-      {
-        lastxref->base.next = (flt_node*)newxref;
-        lastxref = newxref;
-      }
-      lastxref->base.name = flt_strdup(l.xrefs[j].c_str());
-    }
-  }
+  // write every tile file in a separated task
+  return true;
 }
 
-void write_file(const std::string& outfile, const std::string& lff)
+
+void xml_parse_lod_tilenames(const std::string& text, std::vector<std::string>* list)
 {
-  flt* of=(flt*)flt_calloc(1,sizeof(flt));
-  of->filename=flt_strdup(outfile.c_str());
-  of->header = (flt_header*)flt_calloc(1,sizeof(flt_header));
-  prepare_header(of->header);
-  of->hie = (flt_hie*)flt_calloc(1,sizeof(flt_hie));
-  prepare_hie(of->hie, lff);
+  if ( text.empty() ) return;
+  std::string tmp=text;
+  size_t i=0,j=0;
 
-  if ( !flt_write_to_filename(of) )
-    printf( "Error\n" );
+  while ( i < tmp.length() )
+  {
+    if ( tmp[i]==',' ) tmp[i]=0;
+  }
+#error Estaba partiendo por comas los nombres.
+}
 
-  flt_release(of);
-  flt_free(of);
+bool read_xml(const std::string& xmlfile, mlod_def* def)
+{
+  using namespace tinyxml2;
+  tinyxml2::XMLDocument doc;
+  if ( doc.LoadFile( xmlfile.c_str() ) != XML_NO_ERROR ) 
+    return false;
+  XMLElement* root = doc.FirstChildElement("fltmlod");
+  if ( !root )
+  {
+    fprintf( stderr, "No root node in xml\n" );
+    return false;
+  }
+  // -- Reading <lods> --
+  {
+    XMLElement* lods = root->FirstChildElement("lods");
+    if ( lods )
+    {
+      XMLElement* lod = lods->FirstChildElement("lod");
+      while ( lod )
+      {
+        const char* id= lod->Attribute("id");
+        if ( id )
+        {
+          lod_def* ldef = new lod_def;
+          ldef->id = id;
+          ldef->range[0] = lod->DoubleAttribute("in");
+          ldef->range[1] = lod->DoubleAttribute("out");
+          def->lods[id] = ldef;
+        }
+        else
+          fprintf(stderr, "<lod> has no id attribute\n" );
+        lod = lod->NextSiblingElement("lod");
+      }
+    }
+    if ( def->lods.empty() )
+    {
+      fprintf( stderr, "No lods defined in xml\n" );
+      return -1;
+    }
+  }
+
+  
+  // reading <tiles>
+  {
+    XMLElement* tiles = root->FirstChildElement("tiles");
+    if ( tiles )
+    {
+      for ( XMLElement* tile = tiles->FirstChildElement("tile"); tile; tile = tile->NextSiblingElement("tile") )
+      {
+        const char* fname = tile->Attribute("name");
+        if ( !fname ){ fprintf( stderr, "No filename defined for <tile>\n" ); continue; }
+
+        tile_def* tiledef = new tile_def;
+        tiledef->filename = fname;
+        for ( XMLElement* tilelod= tile->FirstChildElement("lod"); tilelod; tilelod=tilelod->NextSiblingElement("lod") )
+        {
+          const char* id=tilelod->Attribute("id");
+          if ( !id ) { fprintf(stderr, "No id defined for <lod> in tile %s\n", fname); continue; }
+          lod_tile lodtile;
+          lodtile.id = id;
+          xml_parse_lod_tilenames(tilelod->GetText(), &lodtile.files);
+          if ( lodtile.files.empty() ){ fprintf(stderr, "No tile names in lod id=%s for tile %s\n", id, fname); continue;}
+          
+        }
+        def->tiles.push_back( tiledef );          
+      }
+    }
+  }
+
+  return true;
 }
 
 void print_usage(const char* p)
 {
   char* program=flt_path_basefile(p);
-  printf( "%s: Makes a master Openflight out of LOD files as xrefs\n", program );
-  printf( "\tIt works by reading lod files from 0..9\n\n");
-  printf( "Usage: $ %s [-o outfile]\n\n", program );
+  printf( "%s: Makes LOD tile node files out of a XML specification\n\n", program );
+  printf( "Usage: $ %s [options] <in_xml_file>\n\n", program );
   printf( "Options:\n");
-  printf( "\t -?        : This help screen\n");
-  printf( "\t -l lodff  : LOD Files printf Format. Something like lod%%i.txt\n");
-  printf( "\t -o        : Output file. default=master.flt\n" );  
+  printf( "\t -?      : This help screen\n");
+  printf( "\t -d <dir>: Output directory of lod tile files. Default=current\n" );  
+  printf( "\t -f      : Force file overwriting. Default=none\n" );
   printf( "\nExamples:\n" );
-  printf( "\tCreates a master out of lod[n].txt files in the current folder:\n" );
-  printf( "\t  $ %s -o mymaster.flt\n\n", program);
-  printf( "\tCreates a master out of these lod files:\n" );
-  printf( "\t  $ %s -l C:\\mylod_%%i.txt -o C:\\master.flt\n\n", program);
+  printf( "\tCreates LOD tile files in current directory forcing overwrite:\n" );
+  printf( "\t  $ %s -f my_lods.xml\n\n", program);  
   flt_free(program);
 }
 
 int main(int argc, const char** argv)
 {
-  std::string outfile, lodfilefmt;
-  char c;
+  std::string xmlfile, outdir;
+  bool force=false;
   for ( int i = 1; i < argc; ++i )
   {
     if ( argv[i][0]=='-' )
     {
-      c=argv[i][1];
+      char c=argv[i][1];
       switch (c)
       {
       case '?':
         print_usage(argv[0]);
         return -1;
         break;
-      case 'o':
-        if (i+1<argc) outfile = argv[++i];
+      case 'f':
+        force=true; 
+        break;
       break;            
-      case 'l':
-        if (i+1<argc) lodfilefmt = argv[++i];
+      case 'd':
+        if (i+1<argc) outdir = argv[++i];
       break;
       }
-    }    
+    }
+    else
+      xmlfile=argv[i];
   }
-  if ( outfile.empty() )
-    outfile = "master.flt";
-  if ( lodfilefmt.empty() )
-    lodfilefmt = "lod%d.txt";
-  write_file(outfile, lodfilefmt);
+
+  if ( xmlfile.empty() )
+  {
+    fprintf( stderr, "No input xml file defined\n" );
+    print_usage(argv[0]);
+    return -1;
+  }
+
+  mlod_def def;
+  if ( !read_xml(xmlfile, &def) )
+  {
+    fprintf( stderr, "Cannot read xml file: %s\n", xmlfile.c_str() );
+    return -1;
+  }
+
+  if ( !write_files(def, outdir, force) )
+  {
+    fprintf( stderr, "Cannot write files\n" );
+    return -1;
+  }
+
+  def.release();
+
   return 0;
 }
