@@ -243,7 +243,7 @@ bool xrefSorter( const fltXRefExtent& a, const fltXRefExtent& b )
   return a.name < b.name;
 }
 
-void read_with_callbacks_mt(const std::vector<std::string>& files, bool recurse)
+void read_with_callbacks_mt(const std::vector<std::string>& files, bool recurse, bool cacheformat)
 {
   fltThreadPool tp;
   tp.numThreads = std::thread::hardware_concurrency()*2;
@@ -275,12 +275,16 @@ void read_with_callbacks_mt(const std::vector<std::string>& files, bool recurse)
     ++c;
   } while ( tp.isWorking() );
   fprintf( stderr, "\n" );
-  printf( "Units (Header) : %s\n", flt_get_vcoords_units_name(of->header->v_coords_units) );
-  printf( "Radius (Header): %g\n", of->header->radius );
-  printf( "Component Order: XYZ\n" );
-  printf( "XRefs          : %d\n", tp.xref_extents.size()-1 );
-  printf( "Time           : %g secs\n\n", (fltGetTime()-t0)/1000.0);
+  if ( !cacheformat )
+  {
+    printf( "Units (Header) : %s\n", flt_get_vcoords_units_name(of->header->v_coords_units) );
+    printf( "Radius (Header): %g\n", of->header->radius );
+    printf( "Component Order: XYZ\n" );
+    printf( "XRefs          : %d\n", tp.xref_extents.size()-1 );
+    printf( "Time           : %g secs\n\n", (fltGetTime()-t0)/1000.0);
+  }
 
+  // keep out of sorting the first one (total)
   std::sort(tp.xref_extents.begin()+1, tp.xref_extents.end(), xrefSorter);
   
   // printing all x refs + total [0]
@@ -299,14 +303,23 @@ void read_with_callbacks_mt(const std::vector<std::string>& files, bool recurse)
     }
     radxy = sqrt(sqcmp[0]+sqcmp[1]);
     radxyz= sqrt(sqcmp[0]+sqcmp[1]+sqcmp[2]);
-    printf( "\n[%s]\n", ext.name.c_str() );
-    printf( "Vertices       : %I64u\n", ext.vertices);
-    printf( "Extension      : %g, %g, %g\n", extension[0], extension[1], extension[2] );
-    printf( "Radius X/Y     : %g\n", radxy*0.5);
-    printf( "Radius BSphere : %g\n", radxyz*0.5);
-    printf( "Center         : %g %g %g\n", cent[0], cent[1], cent[2]);
-    printf( "Min            : %g, %g, %g\n", ext.extent_min[0], ext.extent_min[1], ext.extent_min[2] );
-    printf( "Max            : %g, %g, %g\n", ext.extent_max[0], ext.extent_max[1], ext.extent_max[2] );  
+
+    if ( !cacheformat )
+    {
+      printf( "\n[%s]\n", ext.name.c_str() );
+      printf( "Vertices       : %I64u\n", ext.vertices);
+      printf( "Extension      : %g, %g, %g\n", extension[0], extension[1], extension[2] );
+      printf( "Radius X/Y     : %g\n", radxy*0.5);
+      printf( "Radius BSphere : %g\n", radxyz*0.5);
+      printf( "Center         : %g %g %g\n", cent[0], cent[1], cent[2]);
+      printf( "Min            : %g, %g, %g\n", ext.extent_min[0], ext.extent_min[1], ext.extent_min[2] );
+      printf( "Max            : %g, %g, %g\n", ext.extent_max[0], ext.extent_max[1], ext.extent_max[2] );  
+    }
+    else
+    {
+      printf( "%s %g %g %g %g %g %g\n", ext.name.c_str(), ext.extent_min[0], ext.extent_min[1], ext.extent_min[2],
+        ext.extent_max[0], ext.extent_max[1], ext.extent_max[2] );
+    }
   }
 
   // releasing memory
@@ -320,6 +333,7 @@ void read_with_callbacks_mt(const std::vector<std::string>& files, bool recurse)
 int main(int argc, const char** argv)
 {
   bool recurse = false;
+  bool cacheformat = false;
   std::vector<std::string> files;
   for ( int i = 1; i < argc; ++i )
   {
@@ -328,7 +342,8 @@ int main(int argc, const char** argv)
       switch ( argv[i][1] )
       {
         case 'r': recurse = true; break;
-        default : printf ( "Unknown option -%c\n", argv[i][1]); 
+        case 'c': cacheformat = true; break;
+        default : fprintf ( stderr, "Unknown option -%c\n", argv[i][1]); 
       }
     }
     else
@@ -337,19 +352,20 @@ int main(int argc, const char** argv)
 
   if ( !files.empty() )
   {
-    read_with_callbacks_mt(files,recurse);
+    read_with_callbacks_mt(files, recurse, cacheformat);
   }
   else
   {
     char* program=flt_path_basefile(argv[0]);
-    printf("%s: Compute extents of the bounding box containing all geometry in a FLT file\n\n", program );    
-    printf("Usage: $ %s <options> <flt_files> \nOptions:\n", program );    
-    printf("\t -r   : Recursive. Resolve all external references recursively\n");
-    printf("\nExamples:\n" );
-    printf("\tExtent of all the FLT files and their references:\n" );
-    printf("\t  $ %s -r master.flt\n\n", program);    
-    printf("\tExtent of a model FLT file:\n" );
-    printf("\t  $ %s model.flt\n\n", program );
+    fprintf(stderr, "%s: Compute extents of the bounding box containing all geometry in a FLT file\n\n", program );    
+    fprintf(stderr, "Usage: $ %s <options> <flt_files> \nOptions:\n", program );    
+    fprintf(stderr, "\t -r   : Recursive. Resolve all external references recursively\n");
+    fprintf(stderr, "\t -c   : Cache file format. One line per entry with min and max only\n" );
+    fprintf(stderr, "\nExamples:\n" );
+    fprintf(stderr, "\tExtent of all the FLT files and their references in plain format:\n" );
+    fprintf(stderr, "\t  $ %s -r -c master.flt > out.txt\n\n", program);    
+    fprintf(stderr, "\tExtent of a model FLT file:\n" );
+    fprintf(stderr, "\t  $ %s model.flt\n\n", program );
     flt_free(program);
   }
   

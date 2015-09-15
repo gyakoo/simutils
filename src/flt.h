@@ -936,6 +936,7 @@ int flt_load_from_filename(const char* filename, flt* of, flt_opts* opts)
   readtab[FLT_OP_HEADER] = flt_reader_header;         // always read header
   readtab[FLT_OP_PAL_VERTEX] = flt_reader_pal_vertex; // always read vertex palette header for skipping at least
   readtab[FLT_OP_CONTINUATION] = flt_reader_continuation; // always prepared to continue
+  if ( opts->pflags & FLT_OPT_PAL_VERTEX )  { use_pal = FLT_TRUE; }
   if ( opts->pflags & FLT_OPT_PAL_TEXTURE ) { readtab[FLT_OP_PAL_TEXTURE] = flt_reader_pal_tex; use_pal=FLT_TRUE; }  
   if ( opts->hflags & FLT_OPT_HIE_EXTREF )  { readtab[FLT_OP_EXTREF] = flt_reader_extref; use_node=FLT_TRUE; }
   if ( opts->hflags & FLT_OPT_HIE_OBJECT )  { readtab[FLT_OP_OBJECT] = flt_reader_object; use_node=FLT_TRUE; }
@@ -1831,10 +1832,12 @@ void flt_release(flt* of)
   {
 #ifdef FLT_UNIQUE_FACES
     // dict of faces
-    flt_dict_destroy(&of->ctx->dictfaces, FLT_TRUE, flt_face_destroy_name);
+    if ( of->ctx->dictfaces )
+      flt_dict_destroy(&of->ctx->dictfaces, FLT_TRUE, flt_face_destroy_name);
 #endif
     // stack
-    flt_stack_destroy(&of->ctx->stack);
+    if ( of->ctx->stack )
+      flt_stack_destroy(&of->ctx->stack);
 
     // dict
     if ( of->ctx->dict && flt_atomic_dec(&of->ctx->dict->ref)<=0 )
@@ -3028,7 +3031,19 @@ int flt_write_64(struct flt* of, void* _u64)
 
 int flt_write_char(struct flt* of, const char* _c, int len)
 {
-  return (int)fwrite(_c,1,len,of->ctx->f);
+  const int inlen = _c ? strlen(_c) : 0;
+  const int minlen=flt_min(inlen,len-1);
+  int i=0;
+  int ret=0;
+  char zero=0;
+  
+  for (;i<minlen;++i)
+    ret += (int)fwrite(_c+i,1,1,of->ctx->f);
+  
+  for ( ;i<len;++i)
+    ret += (int)fwrite(&zero,1,1,of->ctx->f);
+  
+  return ret;
 }
 
 int flt_write_op(struct flt* of, fltu16 op, fltu16 len)
@@ -3109,15 +3124,12 @@ void flt_write_header(struct flt* of)
 
 void flt_write_extref(struct flt* of, flt_node_extref* xref)
 {
-  char name[200]={0};
   fltu32 u32=0;
   fltu16 u16=0;
   flti32 written=0;
 
   written+=flt_write_op(of, FLT_OP_EXTREF, 216);
-  if ( xref->base.name )
-    strcpy(name,xref->base.name);
-  written+=flt_write_char(of, name,200);
+  written+=flt_write_char(of, xref->base.name,200);
   written+=flt_write_32(of, &u32);
   written+=flt_write_32(of, &xref->flags);
   written+=flt_write_16(of, &xref->view_asbb);
@@ -3128,14 +3140,11 @@ void flt_write_extref(struct flt* of, flt_node_extref* xref)
 
 void flt_write_group(struct flt* of, flt_node_group* group)
 {
-  char name[8]={0};
   fltu32 u32=0; fltu16 u16=0; fltu8 u8=0;
   flti32 written=0;
 
   written+=flt_write_op(of, FLT_OP_GROUP,44);
-  if ( group->base.name )
-    strcpy(name,group->base.name);
-  written+=flt_write_char(of,name,8);
+  written+=flt_write_char(of,group->base.name,8);
   written+=flt_write_16(of,&group->priority);
   written+=flt_write_16(of,&u16);
   u32=group->flags;
@@ -3154,14 +3163,11 @@ void flt_write_group(struct flt* of, flt_node_group* group)
 
 void flt_write_lod(struct flt* of, flt_node_lod* lod)
 {
-  char name[8]={0};
   fltu32 u32=0; fltu16 u16=0;
   flti32 written=0;
 
   written+=flt_write_op(of,FLT_OP_LOD,80);
-  if ( lod->base.name )
-    strcpy(name,lod->base.name);
-  written+=flt_write_char(of,name,8);
+  written+=flt_write_char(of,lod->base.name,8);
   written+=flt_write_32(of,&u32);
   written+=flt_write_64(of,&lod->switch_in);
   written+=flt_write_64(of,&lod->switch_out);
@@ -3173,6 +3179,7 @@ void flt_write_lod(struct flt* of, flt_node_lod* lod)
   written+=flt_write_64(of,&lod->cnt_coords[2]);
   written+=flt_write_64(of,&lod->trans_range);
   written+=flt_write_64(of,&lod->sig_size);
+  
   FLT_ASSERT(written==80);
 }
 
