@@ -1554,6 +1554,13 @@ inline ID3D12CommandList * const * CommandListCast(ID3D12GraphicsCommandList * c
 #ifdef __cplusplus
 extern "C" {
 #endif
+  typedef struct vis_h
+  {
+    uint16_t type;
+    uint16_t subtype;
+    void* obj;
+  }vis_h;
+
   typedef struct vis
   {
     ID3D12Device* d3d12device;
@@ -1585,8 +1592,6 @@ extern "C" {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #define vdx12_throwfailed(hr) { if (FAILED(hr)) throw; }
 void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, _Outptr_result_maybenull_ IDXGIAdapter1** ppAdapter, _Out_ D3D_FEATURE_LEVEL* featLevel);
-void vdx12_wait_previous_frame(vis* vi);
-int vdx12_init_pipeline_assets(vis* vi);
 void vdx12_release_pipeline_assets(vis* vi);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1702,15 +1707,13 @@ create_as_warp:
   vis_saferelease(swapChain);
   vis_saferelease(factory);
 
-  return vdx12_init_pipeline_assets(vi);
+  return VIS_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void vis_release_plat(vis* vi)
 {
-  vdx12_wait_previous_frame(vi);
-
   vdx12_release_pipeline_assets(vi);
   vis_saferelease(vi->cmdalloc);
   for (int i = 0; i < VDX12_FRAMECOUNT; ++i)
@@ -1749,106 +1752,24 @@ int vis_begin_frame(vis* vi)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-void vis_render_frame(vis* vi)
-{
-  /*
-  // Record all the commands we need to render the scene into the command list.
-  PopulateCommandList();
-
-  // Execute the command list.
-  ID3D12CommandList* ppCommandLists[] = { m_commandList.Get() };
-  m_commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
-  */
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-int vis_end_frame(vis* vi)
+int vis_present_frame(vis* vi)
 {
   // Present the frame.
   vdx12_throwfailed(vi->swapchain->Present(1, 0));
 
-  // WAITING FOR THE FRAME TO COMPLETE BEFORE CONTINUING IS NOT BEST PRACTICE.
-  // This is code implemented as such for simplicity. More advanced samples 
-  // illustrate how to use fences for efficient resource usage.
-  vdx12_wait_previous_frame(vi);
   return VIS_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-vis_resource vis_create_resource(vis* vi, uint16_t type, void* resData, uint32_t flags)
+vis_handle vis_create_resource(vis* vi, uint16_t type, void* resData, uint32_t flags)
 {
-  vis_resource res = VIS_RES_INVALID;
+  vis_handle res = VIS_NULL;
   switch (type)
   {
     case VIS_TYPE_VERTEXBUFFER: return vdx12_create_vertex_buffer(vi, resData, flags); break;
   }
   return res;
-}
-
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-int vdx12_init_pipeline_assets(vis* vi)
-{
-  // Create an empty root signature.
-  {
-    CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
-    rootSignatureDesc.Init(0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
-
-    ID3DBlob *signature, *error;
-    vdx12_throwfailed(D3D12SerializeRootSignature(&rootSignatureDesc, 
-      D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error));
-    vdx12_throwfailed(vi->d3d12device->CreateRootSignature(0, 
-      signature->GetBufferPointer(), signature->GetBufferSize(), 
-      IID_PPV_ARGS(&vi->root_sig)) );
-    vis_saferelease(signature);
-    vis_saferelease(error);
-  }
-
-  // Create the pipeline state, which includes compiling and loading shaders.
-  {
-
-  }
-
-
-  // Create synchronization objects and wait until assets have been uploaded to the GPU.
-  {
-    vdx12_throwfailed(vi->d3d12device->CreateFence(0, D3D12_FENCE_FLAG_NONE, 
-      IID_PPV_ARGS(&vi->fence)));
-    vi->fence_value = 1;
-
-    // Create an event handle to use for frame synchronization.
-    vi->fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    if (vi->fence_event == nullptr)
-      vdx12_throwfailed(HRESULT_FROM_WIN32(GetLastError()));
-
-    // Wait for the command list to execute; we are reusing the same command 
-    // list in our main loop but for now, we just want to wait for setup to 
-    // complete before continuing.
-    vdx12_wait_previous_frame(vi);
-  }
-  return VIS_OK;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-void vdx12_wait_previous_frame(vis* vi)
-{
-  // Signal and increment the fence value.
-  const UINT64 fence = vi->fence_value;
-  vdx12_throwfailed(vi->cmdqueue->Signal(vi->fence, fence));
-  ++vi->fence_value;
-
-  // Wait until the previous frame is finished.
-  if (vi->fence->GetCompletedValue() < fence)
-  {
-    vdx12_throwfailed(vi->fence->SetEventOnCompletion(fence, vi->fence_event));
-    WaitForSingleObject(vi->fence_event, INFINITE);
-  }
-
-  vi->framendx = vi->swapchain->GetCurrentBackBufferIndex();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

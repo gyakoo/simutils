@@ -19,13 +19,13 @@
 
 struct app_assets
 {
-  vis_resource pipeline;
-  vis_resource cmd_list;
-  vis_resource vb;
-  vis_resource vs;
-  vis_resource ps;
-  vis_resource shader_layout;
-  vis_resource* render_targets;
+  vis_handle pipeline;
+  vis_handle cmd_list;
+  vis_handle vb;
+  vis_handle vs;
+  vis_handle ps;
+  vis_handle shader_layout;
+  vis_handle* render_targets;
   vis_viewport viewport;
 };
 
@@ -38,8 +38,9 @@ struct app_vertex
 void app_wait_for_gpu(vis* vi)
 {
   // tell gpu to signal once it finishes and wait for it here
-  vis_id signal = vis_sync_gpu_to_signal(vi);
+  vis_handle signal = vis_sync_gpu_to_signal(vi);
   vis_sync_cpu_wait_for_signal(vi, signal);
+  vis_release_resource(vi, &signal);
 }
 
 int app_load_assets(vis* vi, app_assets* assets)
@@ -75,7 +76,7 @@ int app_load_assets(vis* vi, app_assets* assets)
 
     // create RT with the back buffers
     const uint32_t bbcount = vis_get_back_buffer_count(vi);
-    assets->render_targets = (vis_resource*)vis_malloc(sizeof(vis_resource)*bbcount);
+    assets->render_targets = (vis_handle*)vis_malloc(sizeof(vis_handle)*bbcount);
     for (uint32_t i = 0; i < bbcount; ++i)
     {
       assets->render_targets[i] = vis_create_resource(vi, VIS_TYPE_RENDER_TARGET, 
@@ -110,7 +111,7 @@ int app_load_assets(vis* vi, app_assets* assets)
     assets->cmd_list = vis_create_resource(vi, VIS_TYPE_COMMAND_LIST, &assets->pipeline, VIS_NONE);
     // Record some upload to GPU in the cmd list
     vis_command_list_record(vi, assets->cmd_list);
-    vis_staging vbupdate = vis_command_list_resource_update(vi, assets->cmd_list, assets->vb, triangleVertices, sizeof(app_vertex));
+    vis_handle vbupdate = vis_command_list_resource_update(vi, assets->cmd_list, assets->vb, triangleVertices, sizeof(app_vertex));
     vis_command_list_close(vi, assets->cmd_list);
     vis_command_list_execute(vi, &assets->cmd_list, 1);
 
@@ -118,7 +119,7 @@ int app_load_assets(vis* vi, app_assets* assets)
     app_wait_for_gpu(vi);
 
     // release temporary resources allocated for upload
-    vis_command_list_release_update(vi, assets->cmd_list, vbupdate);
+    vis_release_resource(vi, &vbupdate);
   }
 
   // viewport/scissor rect
@@ -130,16 +131,16 @@ int app_load_assets(vis* vi, app_assets* assets)
 
 void app_unload_assets(vis* vi, app_assets* assets)
 {
-  vis_release_resource(vi, assets->shader_layout);
-  vis_release_resource(vi, assets->ps);
-  vis_release_resource(vi, assets->vs);
-  vis_release_resource(vi, assets->vb);
-  vis_release_resource(vi, assets->pipeline);
-  vis_release_resource(vi, assets->cmd_list);
+  vis_release_resource(vi, &assets->shader_layout);
+  vis_release_resource(vi, &assets->ps);
+  vis_release_resource(vi, &assets->vs);
+  vis_release_resource(vi, &assets->vb);
+  vis_release_resource(vi, &assets->pipeline);
+  vis_release_resource(vi, &assets->cmd_list);
   
   const uint32_t bbcount = vis_get_back_buffer_count(vi);
   for (uint32_t i = 0; i < bbcount; ++i)
-    vis_release_resource(vi, assets->render_targets[i]);
+    vis_release_resource(vi, &assets->render_targets[i]);
   vis_safefree(assets->render_targets);
 }
 
@@ -173,9 +174,6 @@ void app_render(vis* vi, app_assets* assets)
 
   // execute command list
   vis_command_list_execute(vi, &assets->cmd_list, 1);
-
-  // waits for gpu
-  app_wait_for_gpu(vi);
 }
 
 int main(int argc, const char** argv)
@@ -194,8 +192,8 @@ int main(int argc, const char** argv)
       while (vis_begin_frame(v) == VIS_OK)
       {
         app_render(v, &assets);
-        vis_render_frame(v);
-        vis_end_frame(v);
+        vis_present_frame(v);
+        app_wait_for_gpu(v);
       }
       app_unload_assets(v, &assets);
     }

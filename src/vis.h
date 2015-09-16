@@ -375,15 +375,9 @@ extern "C" {
   }vis_camera;
   
   ////////////////////////////////////////////////
-  typedef struct vis_id
-  {
-    uint16_t type;
-    uint16_t subtype;
-    uint32_t value;
-  }vis_id;
+  typedef struct vis_h;
+  typedef vis_h* vis_handle;
 
-  typedef vis_id vis_resource;
-  typedef vis_id vis_staging;
   ////////////////////////////////////////////////
   typedef struct vis_input_element
   {
@@ -480,12 +474,12 @@ extern "C" {
   ////////////////////////////////////////////////
   typedef struct vis_pipeline_state
   {
-    vis_resource shader_layout;    
-    vis_resource vs;
-    vis_resource ps;
-    vis_resource ds;
-    vis_resource hs;
-    vis_resource gs;
+    vis_handle shader_layout;    
+    vis_handle vs;
+    vis_handle ps;
+    vis_handle ds;
+    vis_handle hs;
+    vis_handle gs;
     vis_input_element* vertex_layout;
     uint32_t vertex_layout_count;
     vis_stream_out_state stream_out_state;
@@ -513,7 +507,7 @@ extern "C" {
   ////////////////////////////////////////////////
   typedef struct vis_cmd_clear
   {
-    vis_resource* rts;
+    vis_handle* rts;
     uint32_t num_rts;
     vis4 clear_color;
   }vis_cmd_clear;
@@ -529,35 +523,33 @@ extern "C" {
   ////////////////////////////////////////////////
   int vis_init(vis** vi, vis_opts* opts);
   int vis_begin_frame(vis* vi);
-  void vis_render_frame(vis* vi);
-  int vis_end_frame(vis* vi);
+  int vis_present_frame(vis* vi);
   void vis_release(vis** vi);
   
   ////////////////////////////////////////////////
-  vis_resource vis_create_resource(vis* vi, uint16_t type, void* resData, uint32_t flags);  
-  void vis_release_resource(vis* vi, vis_resource resource);
+  vis_handle vis_create_resource(vis* vi, uint16_t type, void* resData, uint32_t flags);  
+  void vis_release_resource(vis* vi, vis_handle* resource);
 
   ////////////////////////////////////////////////
   uint32_t vis_shader_compile(vis* vi, uint32_t loadSrc, void* srcData, uint32_t srcSize, vis_shader_bytecode* outByteCode );
   void vis_pipeline_state_set_default(vis* vi, vis_pipeline_state* pstate);
 
   ////////////////////////////////////////////////
-  uint32_t vis_command_list_record(vis* vi, vis_resource cmd_list);
-  uint32_t vis_command_list_close(vis* vi, vis_resource cmd_list);
-  uint32_t vis_command_list_reset(vis* vi, vis_resource cmd_list);
-  uint32_t vis_command_list_set(vis* vi, vis_resource cmd_list, uint32_t cls_state, void* data_state, int32_t flags);
-  vis_staging vis_command_list_resource_update(vis* vi, vis_resource cmd_list, vis_resource res, void* inData, uint32_t inSize);
-  uint32_t vis_command_list_release_update(vis* vi, vis_resource cmd_list, vis_staging stag);
-  uint32_t vis_command_list_execute(vis* vi, vis_resource* cmd_lists, uint32_t count);
+  uint32_t vis_command_list_record(vis* vi, vis_handle cmd_list);
+  uint32_t vis_command_list_close(vis* vi, vis_handle cmd_list);
+  uint32_t vis_command_list_reset(vis* vi, vis_handle cmd_list);
+  uint32_t vis_command_list_set(vis* vi, vis_handle cmd_list, uint32_t cls_state, void* data_state, int32_t flags);
+  vis_handle vis_command_list_resource_update(vis* vi, vis_handle cmd_list, vis_handle res, void* inData, uint32_t inSize);
+  //uint32_t vis_command_list_release_update(vis* vi, vis_handle cmd_list, vis_handle stag);
+  uint32_t vis_command_list_execute(vis* vi, vis_handle* cmd_lists, uint32_t count);
 
   ////////////////////////////////////////////////
-  vis_id vis_sync_gpu_to_signal(vis* vi);
-  void vis_sync_cpu_wait_for_signal(vis* vi, vis_id signal);
+  vis_handle vis_sync_gpu_to_signal(vis* vi);
+  void vis_sync_cpu_wait_for_signal(vis* vi, vis_handle signal);
   void vis_sync_cpu_callback_when_signal(vis* vi);
 
   ////////////////////////////////////////////////
   void vis_rect_make(vis_rect* r, float x, float y, float w, float h);
-  int vis_res_valid(vis_resource res);
 
   ////////////////////////////////////////////////
   uint32_t vis_get_back_buffer_count(vis* vi);
@@ -576,10 +568,6 @@ extern "C" {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #if defined(VIS_DX11) || defined(VIS_DX12)
 int vwin_create_window(vis_opts* opts);
-#endif
-
-#ifdef VIS_IMPLEMENTATION
-static vis_resource VIS_RES_INVALID = { 0xffff, 0xffff, 0xffffffff };
 #endif
 
 typedef struct vis_array
@@ -634,12 +622,6 @@ void vis_rect_make(vis_rect* r, float x, float y, float w, float h)
 {
   r->x = x; r->y = y;
   r->width = w; r->height = h;
-}
-
-int vis_res_valid(vis_resource res)
-{
-  const int r = (*(uint64_t*)&res == 0xffffffffffffffff) ? VIS_TRUE : VIS_FALSE;
-  return r;
 }
 
 ///////////////////////////////////////////////////////////////////
