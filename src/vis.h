@@ -52,12 +52,12 @@ SOFTWARE.
 
 #if defined(_DEBUG) || defined(DEBUG)
 # ifdef _MSC_VER
-# define vis_break { __debugbreak(); }
+# define VIS_BREAK { __debugbreak(); }
 # else
-# define vis_break { raise(SIGTRAP); }
+# define VIS_BREAK { raise(SIGTRAP); }
 # endif
 #else
-# define vis_break
+# define VIS_BREAK
 #endif
 
 #define vis_unused(p) (p)=(p)
@@ -66,7 +66,7 @@ SOFTWARE.
 #ifdef VIS_NO_MEMOUT_CHECK
 #define vis_mem_check(p)
 #else
-#define vis_mem_check(p) { if ( !(p) ) { vis_break; } }
+#define vis_mem_check(p) { if ( !(p) ) { VIS_BREAK; } }
 #endif
 
 #define VIS_TRUE  (1)
@@ -291,9 +291,11 @@ SOFTWARE.
 #define VIS_PRIM_LINE       2
 #define VIS_PRIM_TRIANGLE   3
 #define VIS_PRIM_PATCH      4
-
-#define VIS_PRIM_TRIANGLE_LIST 30
-#define VIS_PRIM_TRIANGLE_
+#define VIS_PRIMTOPO_POINT_LIST 10
+#define VIS_PRIMTOPO_TRIANGLE_LIST 30
+#define VIS_PRIMTOPO_TRIANGLE_STRIP 31
+#define VIS_PRIMTOPO_LINE_LIST 20
+#define VIS_PRIMTOPO_LINE_STRIP 21
 
 #define VIS_COMPFUNC_NEVER 1
 #define VIS_COMPFUNC_LESS 2
@@ -323,6 +325,8 @@ SOFTWARE.
 #define VIS_CLS_PRIM_TOPOLOGY 4
 #define VIS_CLS_VERTEX_BUFFER 5
 #define VIS_CLS_CLEAR_RT 6
+#define VIS_CLS_DRAW 7
+#define VIS_CLS_DRAW_INDEXED 8
 
 
 #ifdef __cplusplus
@@ -490,7 +494,7 @@ extern "C" {
     vis_depth_stencil_state depth_stencil_state;
     uint8_t depth_stencil_format;                 // VIS_FORMAT_*
     uint32_t blend_sample_mask;
-    uint8_t primitive_topology;                   // VIS_PRIM*
+    uint8_t primitive;                            // VIS_PRIM*
     uint32_t rt_count;                            
     uint8_t rt_formats[VIS_MAX_RT];               // VIS_FORMAT_*      
     uint8_t msaa_count;                           // multisamples per pixel
@@ -513,6 +517,14 @@ extern "C" {
     uint32_t num_rts;
     vis4 clear_color;
   }vis_cmd_clear;
+
+  typedef struct vis_cmd_draw
+  {
+    uint32_t start_vertex;
+    uint32_t num_verts;
+    uint32_t start_instance;
+    uint32_t num_instances;
+  }vis_cmd_draw;
   
   ////////////////////////////////////////////////
   int vis_init(vis** vi, vis_opts* opts);
@@ -533,7 +545,7 @@ extern "C" {
   uint32_t vis_command_list_record(vis* vi, vis_resource cmd_list);
   uint32_t vis_command_list_close(vis* vi, vis_resource cmd_list);
   uint32_t vis_command_list_reset(vis* vi, vis_resource cmd_list);
-  uint32_t vis_command_list_set(vis* vi, vis_resource cmd_list, uint32_t cls_state, void* data_state, uint32_t flags);
+  uint32_t vis_command_list_set(vis* vi, vis_resource cmd_list, uint32_t cls_state, void* data_state, int32_t flags);
   vis_staging vis_command_list_resource_update(vis* vi, vis_resource cmd_list, vis_resource res, void* inData, uint32_t inSize);
   uint32_t vis_command_list_release_update(vis* vi, vis_resource cmd_list, vis_staging stag);
   uint32_t vis_command_list_execute(vis* vi, vis_resource* cmd_lists, uint32_t count);
@@ -545,24 +557,51 @@ extern "C" {
 
   ////////////////////////////////////////////////
   void vis_rect_make(vis_rect* r, float x, float y, float w, float h);
+  int vis_res_valid(vis_resource res);
 
   ////////////////////////////////////////////////
   uint32_t vis_get_back_buffer_count(vis* vi);
   void* vis_get_back_buffer(vis* vi, uint32_t index);
-
-
-  /* ************************************************************************************************ */
-  /* ************************************************************************************************ */
-  /* ************************************************************************************************ */
-  /* ************************************************************************************************ */
 #ifdef __cplusplus
 };
 #endif
 
+/* ************************************************************************************************ */
+/* ************************************************************************************************ */
+/* ************************************************************************************************ */
+/* ************************************************************************************************ */
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//                          Definitions to be used by specific _dx11.h _dx12.h _gl.h
+////////////////////////////////////////////////////////////////////////////////////////////////////
 #if defined(VIS_DX11) || defined(VIS_DX12)
 int vwin_create_window(vis_opts* opts);
 #endif
 
+#ifdef VIS_IMPLEMENTATION
+static vis_resource VIS_RES_INVALID = { 0xffff, 0xffff, 0xffffffff };
+#endif
+
+typedef struct vis_array
+{
+  void** data;
+  uint32_t size;
+  uint32_t capacity;
+}vis_array;
+
+int32_t vis_array_create(vis_array** arr, uint32_t capacity);
+void vis_array_destroy(vis_array** arr);
+void vis_array_push_back(vis_array* arr, void* elem);
+void* vis_array_pop_back(vis_array* arr);
+void* vis_array_at(vis_array* arr, uint32_t index);
+void vis_array_clear(vis_array* arr);
+void vis_array_grow_double(vis_array* arr);
+void vis_array_ensure(vis_array* arr, uint32_t count_new_elements); // makes sure there's room for new elements
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//                              PLATFORM SPECIFIC IMPLEMENTATION
+////////////////////////////////////////////////////////////////////////////////////////////////////
 #if defined(VIS_DX11)
 #pragma warning(disable:4005)
 # include "vis_dx11.h"
@@ -575,7 +614,6 @@ int vwin_create_window(vis_opts* opts);
 
 
 #ifdef VIS_IMPLEMENTATION
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                COMMON IMPLEMENTATION
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -598,9 +636,14 @@ void vis_rect_make(vis_rect* r, float x, float y, float w, float h)
   r->width = w; r->height = h;
 }
 
+int vis_res_valid(vis_resource res)
+{
+  const int r = (*(uint64_t*)&res == 0xffffffffffffffff) ? VIS_TRUE : VIS_FALSE;
+  return r;
+}
 
 ///////////////////////////////////////////////////////////////////
-// WINDOWS - vwin_create_window
+//                  WINDOWS - vwin_create_window
 ///////////////////////////////////////////////////////////////////
 #if defined(VIS_DX11) || defined(VIS_DX12)
 LRESULT CALLBACK vwin_proc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -638,7 +681,7 @@ int vwin_create_window(vis_opts* opts)
 }
 
 ///////////////////////////////////////////////////////////////////////
-// WINDOWS - vwin_proc
+//                        WINDOWS - vwin_proc
 ///////////////////////////////////////////////////////////////////////
 LRESULT CALLBACK vwin_proc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -653,10 +696,68 @@ LRESULT CALLBACK vwin_proc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
   // Handle any messages the switch statement didn't.
   return DefWindowProc(hWnd, message, wParam, lParam);
 }
-
-
 #endif
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                        DYNAMIC ARRAY IMPLEMENTATION
+////////////////////////////////////////////////////////////////////////////////////////////////////
+int32_t vis_array_create(vis_array** arr, uint32_t capacity)
+{
+  *arr = (vis_array*)vis_calloc(1, sizeof(vis_array));
+  if (!*arr) return VIS_FALSE;
+  (*arr)->capacity = capacity>0 ? capacity : 256;
+  (*arr)->size = 0;
+  (*arr)->data = (void**)vis_malloc(sizeof(void*)*capacity);
+  if (!(*arr)->data) { vis_array_destroy(arr); return VIS_FALSE; }
+  return VIS_TRUE;
+}
+
+void vis_array_destroy(vis_array** arr)
+{
+  if (!arr || !*arr) return;
+  vis_safefree((*arr)->data);
+  vis_free(*arr);
+  *arr = VIS_NULL;
+}
+
+void vis_array_grow_double(vis_array* arr)
+{
+  uint32_t newcap = arr->capacity * 2;
+  arr->data = (void**)vis_realloc(arr->data, sizeof(void*)*newcap);
+  if (!arr->data) { VIS_BREAK; return; }
+  arr->capacity = newcap;
+}
+
+void vis_array_push_back(vis_array* arr, void* elem)
+{
+  if (arr->size >= arr->capacity)
+    vis_array_grow_double(arr);
+  arr->data[arr->size++] = elem;
+}
+
+void* vis_array_pop_back(vis_array* arr)
+{
+  if (arr->size == 0) return VIS_NULL;
+  return arr->data[--arr->size];
+}
+
+void* vis_array_at(vis_array* arr, uint32_t index)
+{
+  return index >= 0 && index < arr->size ? arr->data[index] : VIS_NULL;
+}
+
+void vis_array_clear(vis_array* arr)
+{
+  arr->size = 0;
+}
+
+void vis_array_ensure(vis_array* arr, uint32_t cout_new_elements)
+{
+  const uint32_t newcap = arr->size + cout_new_elements;
+  if (newcap <= arr->capacity) return;
+  arr->capacity = newcap;
+  vis_array_grow_double(arr); // ensure makes use directly of grow_double policy
+}
 
 #endif // VIS_IMPLEMENTATION
 

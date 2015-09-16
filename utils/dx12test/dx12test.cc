@@ -35,6 +35,13 @@ struct app_vertex
   float color[4];
 };
 
+void app_wait_for_gpu(vis* vi)
+{
+  // tell gpu to signal once it finishes and wait for it here
+  vis_id signal = vis_sync_gpu_to_signal(vi);
+  vis_sync_cpu_wait_for_signal(vi, signal);
+}
+
 int app_load_assets(vis* vi, app_assets* assets)
 {
   // Define the geometry for a triangle, the vertex and pixel shaders for it
@@ -108,8 +115,7 @@ int app_load_assets(vis* vi, app_assets* assets)
     vis_command_list_execute(vi, &assets->cmd_list, 1);
 
     // tell gpu to signal once it finishes and wait for it here
-    vis_id signal = vis_sync_gpu_to_signal(vi);
-    vis_sync_cpu_wait_for_signal(vi, signal); 
+    app_wait_for_gpu(vi);
 
     // release temporary resources allocated for upload
     vis_command_list_release_update(vi, assets->cmd_list, vbupdate);
@@ -153,16 +159,23 @@ void app_render(vis* vi, app_assets* assets)
     // drawing commands
     vis_cmd_clear clear = { &assets->render_targets[vi->framendx], 1, { 0.0f, 0.2f, 0.4f, 1.0f } };
     vis_command_list_set(vi, assets->cmd_list, VIS_CLS_CLEAR_RT, &clear, VIS_NONE);
-    vis_command_list_set(vi, assets->cmd_list, VIS_CLS_PRIM_TOPOLOGY, nullptr, VIS_)
+    vis_command_list_set(vi, assets->cmd_list, VIS_CLS_PRIM_TOPOLOGY, nullptr, VIS_PRIMTOPO_TRIANGLE_LIST);
+    vis_command_list_set(vi, assets->cmd_list, VIS_CLS_VERTEX_BUFFER, &assets->vb, 1);
+    vis_cmd_draw draw = { 0, 3, 0, 1 };
+    vis_command_list_set(vi, assets->cmd_list, VIS_CLS_DRAW, &draw, VIS_NONE);
 
     // (pop) necessary state
     vis_command_list_set(vi, assets->cmd_list, VIS_CLS_RENDER_TARGETS, &assets->render_targets[vi->framendx], -1);
 
+    // close
     vis_command_list_close(vi, assets->cmd_list);    
   }
 
   // execute command list
   vis_command_list_execute(vi, &assets->cmd_list, 1);
+
+  // waits for gpu
+  app_wait_for_gpu(vi);
 }
 
 int main(int argc, const char** argv)
