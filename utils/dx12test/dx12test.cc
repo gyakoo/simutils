@@ -52,6 +52,7 @@ int app_load_assets(vis* vi, app_assets* assets)
     { { 0.25f, -0.25f * vi->aspect_ratio, 0.0f },{ 0.0f, 1.0f, 0.0f, 1.0f } },
     { { -0.25f, -0.25f * vi->aspect_ratio, 0.0f },{ 0.0f, 0.0f, 1.0f, 1.0f } }
   };
+  const uint32_t vbSize = sizeof(app_vertex) * 3;
 
   vis_input_element vinput[] = 
   {
@@ -64,7 +65,7 @@ int app_load_assets(vis* vi, app_assets* assets)
   // Resources (data) - not filling data in yet
   {
     // vb for triangle
-    assets->vb = vis_create_resource(vi, VIS_TYPE_VERTEXBUFFER, nullptr, VIS_NONE);
+    assets->vb = vis_create_resource(vi, VIS_TYPE_VERTEXBUFFER, nullptr, vbSize);
 
     // compile and create vs/ps
     vis_shader_bytecode vsbytecode = { 0 };

@@ -56,9 +56,12 @@ SOFTWARE.
 # else
 # define VIS_BREAK { raise(SIGTRAP); }
 # endif
+#define VIS_ASSERT(c) { if (!(c)){VIS_BREAK;} }
 #else
 # define VIS_BREAK
+#define VIS_ASSERT(c)
 #endif
+#define VIS_ASSERT_ALWAYS(c) { if (!(c)){VIS_BREAK;} }
 
 #define vis_unused(p) (p)=(p)
 #define vis_safefree(p) { if (p){ vis_free(p); (p)=0; } }
@@ -66,7 +69,7 @@ SOFTWARE.
 #ifdef VIS_NO_MEMOUT_CHECK
 #define vis_mem_check(p)
 #else
-#define vis_mem_check(p) { if ( !(p) ) { VIS_BREAK; } }
+#define vis_mem_check(p) VIS_ASSERT_ALWAYS(p && "Out of memory")
 #endif
 
 #define VIS_TRUE  (1)
@@ -375,7 +378,7 @@ extern "C" {
   }vis_camera;
   
   ////////////////////////////////////////////////
-  typedef struct vis_h;
+  struct vis_h;
   typedef vis_h* vis_handle;
 
   ////////////////////////////////////////////////

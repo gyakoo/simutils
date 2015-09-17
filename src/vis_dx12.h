@@ -30,6 +30,10 @@ SOFTWARE.
 #include <D3Dcompiler.h>
 #include <DirectXMath.h>
 
+#ifdef _MSC_VER
+#pragma warning(disable:4238)
+#endif
+
 #ifndef __D3DX12_H__
 #define __D3DX12_H__
 
@@ -1561,21 +1565,20 @@ extern "C" {
     void* obj;
   }vis_h;
 
+  typedef struct vdx12_vertex_buffer
+  {
+    ID3D12Resource* vb;
+    ID3D12Resource* vb_staging;
+  }vdx12_vertex_buffer;
+
   typedef struct vis
   {
     ID3D12Device* d3d12device;
     ID3D12CommandQueue* cmdqueue;
     ID3D12CommandAllocator* cmdalloc;
     IDXGISwapChain3* swapchain;
-    ID3D12DescriptorHeap* rtvheap;
-    ID3D12Resource* render_target[VDX12_FRAMECOUNT];
-    ID3D12RootSignature* root_sig;
-    ID3D12Fence* fence;
-    UINT64 fence_value;
-    HANDLE fence_event;
     float aspect_ratio;
     UINT framendx;
-    UINT rtvheap_descsize;
     MSG msg;
     UINT width;
     UINT height;
@@ -1592,7 +1595,8 @@ extern "C" {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #define vdx12_throwfailed(hr) { if (FAILED(hr)) throw; }
 void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, _Outptr_result_maybenull_ IDXGIAdapter1** ppAdapter, _Out_ D3D_FEATURE_LEVEL* featLevel);
-void vdx12_release_pipeline_assets(vis* vi);
+vis_handle vdx12_create_vertex_buffer(vis* vi, void* data, uint32_t size);
+void vdx12_release_vertex_buffer(vis* vi, vis_handle* resource);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1675,31 +1679,6 @@ create_as_warp:
   }
   vi->aspect_ratio = (float)opts->width / opts->height;
 
-  // Create descriptor heaps
-  {
-    // Describe and create a render target view (RTV) descriptor heap.
-    D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-    rtvHeapDesc.NumDescriptors = VDX12_FRAMECOUNT;
-    rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-    vdx12_throwfailed(vi->d3d12device->CreateDescriptorHeap(&rtvHeapDesc, 
-      IID_PPV_ARGS(&vi->rtvheap)));
-    vi->rtvheap_descsize = vi->d3d12device->GetDescriptorHandleIncrementSize(
-      D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-  }
-
-  // Create frame resources, render targets
-  {
-    CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(vi->rtvheap->GetCPUDescriptorHandleForHeapStart());
-
-    // Create a RTV for each frame.
-    for (UINT n = 0; n < VDX12_FRAMECOUNT; n++)
-    {
-      vdx12_throwfailed(vi->swapchain->GetBuffer(n, IID_PPV_ARGS(&vi->render_target[n])));
-      vi->d3d12device->CreateRenderTargetView(vi->render_target[n], nullptr, rtvHandle);
-      rtvHandle.Offset(1, vi->rtvheap_descsize);
-    }
-  }
   vdx12_throwfailed(vi->d3d12device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, 
     IID_PPV_ARGS(&vi->cmdalloc)));
 
@@ -1714,24 +1693,10 @@ create_as_warp:
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void vis_release_plat(vis* vi)
 {
-  vdx12_release_pipeline_assets(vi);
   vis_saferelease(vi->cmdalloc);
-  for (int i = 0; i < VDX12_FRAMECOUNT; ++i)
-    vis_saferelease(vi->render_target[i]);
-  vis_saferelease(vi->rtvheap);
   vis_saferelease(vi->swapchain);
   vis_saferelease(vi->cmdqueue);
   vis_saferelease(vi->d3d12device);
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-void vdx12_release_pipeline_assets(vis* vi)
-{
-  vis_saferelease(vi->fence);
-  vis_saferelease(vi->root_sig);
-  CloseHandle(vi->fence_event);
-  vi->fence_event = nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1767,9 +1732,22 @@ vis_handle vis_create_resource(vis* vi, uint16_t type, void* resData, uint32_t f
   vis_handle res = VIS_NULL;
   switch (type)
   {
-    case VIS_TYPE_VERTEXBUFFER: return vdx12_create_vertex_buffer(vi, resData, flags); break;
+    case VIS_TYPE_VERTEXBUFFER: res = vdx12_create_vertex_buffer(vi, resData, flags); break;
   }
   return res;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void vis_release_resource(vis* vi, vis_handle* resource)
+{
+  if (!resource || !*resource)
+    return;
+
+  switch ((*resource)->type)
+  {
+  case VIS_TYPE_VERTEXBUFFER: vdx12_release_vertex_buffer(vi, resource); break;
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1819,5 +1797,67 @@ void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory,
 
 #endif
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+vis_handle vdx12_create_vertex_buffer(vis* vi, void* data, uint32_t size)
+{
+  HRESULT hr;
+
+  VIS_ASSERT(vi && size > 0 && "Invalid input data");
+  if (!size)
+    return nullptr;
+
+  // create the actual vb to contain the data
+  ID3D12Resource* vb = nullptr;
+  hr = vi->d3d12device->CreateCommittedResource(
+      &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+      D3D12_HEAP_FLAG_NONE,
+      &CD3DX12_RESOURCE_DESC::Buffer(size),
+      D3D12_RESOURCE_STATE_COPY_DEST,
+      nullptr,
+      IID_PPV_ARGS(&vb)
+    );
+  if (FAILED(hr)) return nullptr;
+
+  // intermediate vb for data coping to gpu from upload-heap
+  ID3D12Resource* vb_staging= nullptr;
+  hr = vi->d3d12device->CreateCommittedResource(
+    &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+    D3D12_HEAP_FLAG_NONE,
+    &CD3DX12_RESOURCE_DESC::Buffer(size),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&vb_staging));
+  if (FAILED(hr)) { vis_saferelease(vb); return nullptr; }
+
+  // create handle and obj
+  vis_handle vh = (vis_handle)vis_malloc(sizeof(vis_h));
+  vis_mem_check(vh);
+  vh->type = VIS_TYPE_VERTEXBUFFER;
+  vh->subtype = 0;
+  vdx12_vertex_buffer* vdx12_vb = (vdx12_vertex_buffer*)vis_malloc(sizeof(vdx12_vertex_buffer));
+  vis_mem_check(vh->obj);
+  vh->obj = vdx12_vb;
+  vdx12_vb->vb = vb;
+  vdx12_vb->vb_staging = vb_staging;
+  return vh;
+}
+
+void vdx12_release_vertex_buffer(vis* vi, vis_handle* resource)
+{
+  if (!(*resource)->obj)
+    return;
+
+  vdx12_vertex_buffer* dx12vb = (vdx12_vertex_buffer*)(*resource)->obj;
+  vis_saferelease(dx12vb->vb);
+  vis_saferelease(dx12vb->vb_staging);
+  vis_free(dx12vb);
+  vis_free((*resource));
+  *resource = nullptr;
+}
+
+#ifdef _MSC_VER
+#pragma warning(default:4238)
+#endif
 
 #endif // _VIS_DX12_H_
