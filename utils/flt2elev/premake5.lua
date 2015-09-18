@@ -9,8 +9,8 @@ solution "flt2elev"
   	project "flt2elev"
 		kind "ConsoleApp"
 		language "C++"
-		files { "flt2elev.cc", "../../src/flt.h" }
-		includedirs { "./", "../../src/", "../../extern/vld/include/"}
+		files { "flt2elev.cc", "../../src/flt.h", "../../extern/stb_image_write.h" }
+		includedirs { "./", "../../src/", "../../extern/vld/include/", "../../extern/"}
 	 		
 		configuration { "windows" }         
 			links { "user32" }

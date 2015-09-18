@@ -205,7 +205,7 @@ double fltGetTime()
 #endif
 }
 
-void fltCountNode(flt_node* n, fltu32* tris)
+void fltCountNode(flt_node* n, fltu32* tris,bool siblings)
 {
   if ( !n ) return;
   
@@ -222,18 +222,17 @@ void fltCountNode(flt_node* n, fltu32* tris)
     }
     else
     {
-      fltCountNode(n->child_head,tris);
+      fltCountNode(n->child_head,tris,true);
     }
-    n = n->next;
+    n = siblings ? n->next : nullptr;
   }
-  
 }
 
 void fltCountOf(flt* of, fltu32* tris)
 {
   if ( !of || !of->hie ) return;
 
-  fltCountNode(of->hie->node_root,tris);  
+  fltCountNode(of->hie->node_root,tris,true);  
 }
 
 void fltXmlIndent(int d){ for ( int i = 0; i < d; ++i ) printf( "  " ); }
@@ -267,11 +266,11 @@ void fltXmlNodePrint(flt_node* n, fltThreadPool* tp, int d, bool allInfo)
       }break;
     }
     
-    if ( n->ndx_pairs_count ) 
+    fltu32 tris=0;
+    fltCountNode(n,&tris,false);
+    if ( tris ) 
     {
-      fltu32 tris=0;
-      fltCountNode(n,&tris);
-      if ( tris ) sprintf_s( tmp, "%s tris=\"%d\"", tmp, tris);
+      sprintf_s( tmp, "%s tris=\"%d\"", tmp, tris);
       hasAttrChildren = true;      
     }
 

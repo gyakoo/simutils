@@ -246,6 +246,8 @@ extern "C" {
     // Returns reason of the error code. Define FLT_LONG_ERR_MESSAGES for longer texts.
   const char* flt_get_err_reason(int errcode);
 
+  int flt_get_op_from_node_type(int nodetype);
+
 #ifdef FLT_WRITER
   int flt_write_to_filename(struct flt* of);
 #endif
@@ -2336,6 +2338,17 @@ const char* flt_get_err_reason(int errcode)
 #endif
   return "Unknown";
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+int flt_get_op_from_node_type(int nodetype)
+{
+  int ops[FLT_NODE_MAX]={0,0,FLT_OP_EXTREF, FLT_OP_GROUP, FLT_OP_OBJECT, FLT_OP_MESH, 
+    FLT_OP_LOD, FLT_OP_FACE, FLT_OP_VERTEX_LIST, FLT_OP_SWITCH};
+  
+  return (nodetype >=0 && nodetype < FLT_NODE_MAX) ? ops[nodetype] : 0;
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Encodes/decodes a vertex stream semantic word with the semantic, size and offset
