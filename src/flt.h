@@ -1510,8 +1510,8 @@ FLT_RECORD_READER(flt_reader_vertex_list)
 #endif
   int leftbytes = oh->length-sizeof(flt_op);
   fltu32 n_inds=(oh->length-4)>>2;
-  fltu32 i;
-
+  fltu32 i,k;
+  fltu32 tarr[3];
 #ifdef FLT_UNIQUE_FACES
   const fltu32 max_ninds_read = sizeof(ctx->tmpbuff)/4; // max no of indices can be read at once
   fltu32* inds=(fltu32*)ctx->tmpbuff; // indices array
@@ -1542,25 +1542,34 @@ FLT_RECORD_READER(flt_reader_vertex_list)
       n_inds = flt_min(n_inds,max_ninds_read);
       leftbytes -= (int)fread(ctx->tmpbuff, 1, n_inds<<2,ctx->f);
 
-      // TRIANGULATE HERE FOR > 3 INDICES !!
-      // we got this batch of indices, let's swap it and encode it with the hash entry code
-      for (i=0;i<n_inds;++i)
-      {
-        vtxoffset = inds[i];
-        flt_swap32(&vtxoffset);
-        vtxoffset -= sizeof(flt_op) + 4; // correct offset
-        
-        // if there's an array, then the vertices have to be compressed (remove boilerplate opcode data)
-        if (of->pal->vtx_array)
+      // this loop is to triangulate like a fan (convex) polygon when n_inds > 3. Also work with n_inds==3
+      if ( n_inds >= 3 )
+      { 
+        // we got this batch of indices, let's swap it and encode it with the hash entry code
+        for (i=0;i<n_inds;++i) flt_swap32(inds+i);
+        tarr[0]=0;
+        for (k=2;k<n_inds;++k)
         {
-          // get the opcode in vertex opcodes buffer
-          if (*(fltu16*)(of->pal->vtx_buff + vtxoffset) != 0)
+          tarr[1]=k-1;
+          tarr[2]=k;
+          for (i=0;i<3;++i)
           {
-            flt_vertex_write(of, vtxoffset);
+            vtxoffset = inds[tarr[i]];            
+            vtxoffset -= sizeof(flt_op) + 4; // correct offset
+
+            // if there's an array, then the vertices have to be compressed (remove boilerplate opcode data)
+            if (of->pal->vtx_array)
+            {
+              // get the opcode in vertex opcodes buffer
+              if (*(fltu16*)(of->pal->vtx_buff + vtxoffset) != 0)
+              {
+                flt_vertex_write(of, vtxoffset);
+              }
+              vtxoffset = *(fltu32*)(of->pal->vtx_buff + vtxoffset + 2);
+            }
+            flt_array_push_back(of->indices, FLTMAKE64(hashe,vtxoffset));
           }
-          vtxoffset = *(fltu32*)(of->pal->vtx_buff + vtxoffset + 2);
         }
-        flt_array_push_back(of->indices, FLTMAKE64(hashe,vtxoffset));
       }
 
       thisndxend = of->indices->size-1; // last index
