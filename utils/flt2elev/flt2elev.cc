@@ -45,7 +45,8 @@ enum
 
 struct fltThreadPool;
 double fltGetTime();
-
+const char* fltFormatExt(int fmt);
+  
 template<typename T> T fltClamp(T v, T _m, T _M){ return v<_m?_m:(v>_M?_M:v);}
 
 //////////////////////////////////////////////////////////////////////////
@@ -103,7 +104,6 @@ struct fltTileInfo
   fltTileInfo()
     : of(nullptr), heightdata(nullptr), tp(nullptr), fltnode(nullptr)
     , v1(nullptr), from1(nullptr), v2(nullptr), from2(nullptr)
-    , mapping(nullptr)
   { }
 
   flt* of;
@@ -111,24 +111,26 @@ struct fltTileInfo
   fltExtent xtent;
   double dim[3];
   int width, height;
+  int stride;
   int rect[4]; // left,top,width,height
   fltThreadPool* tp;
   flt_node* fltnode;
   double *v1, *from1;
   double *v2, *from2;
   double step;
-  const double* mapping;
+  double mapping[3];
 };
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 struct fltMosaic
 {
-  int mosaicCols;
-  int mosaicRows;
+  uint8_t* mosaicData;
+  int mosaicWidth;
+  int mosaicHeight;
   std::string mosaicWc;
 
-  fltMosaic():mosaicCols(-1), mosaicRows(-1){}
+  fltMosaic() : mosaicData(nullptr), mosaicWidth(-1), mosaicHeight(-1){}
 
   void getRowCol(const std::string& name, int* row, int* col)
   {
@@ -163,75 +165,45 @@ struct fltMosaic
     }
   }
 
-  void generateMosaic(const std::string& name, fltThreadPool* tp)
+  bool allocMosaic(fltThreadPool& tp, const std::vector<std::string>& files);
+  void deallocMosaic()
   {
-    if ( mosaicWc.empty() )
-      return;
-
-    int widthpixels=-1, heightpixels = -1;
-    // compute size for mosaic image
+    if ( mosaicData )
     {
-      // get the biggest tile
-      int maxwidth=-1, maxheight=-1;
-      
-      widthpixels = maxwidth*mosaicCols;
-      heightpixels= maxheight*mosaicRows;
+      free( mosaicData );
+      mosaicData = nullptr;
     }
-
-    if ( widthpixels <= 0 || heightpixels <= 0 )
-      return;
-
-
-
-    // for each image tile in mosaicmap
-    //    compute the row/colum out of mosaic wildcard and tile name
-    //    blit the image into the mosaic row/colum
-    //    deallocate tile
-    //    
-    // save the mosaic image into the destination format
   }
-
 };
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-struct fltThreadBaseTask
+struct fltTask
 {
-  fltThreadBaseTask(const std::string& fname):filename(fname)
+  fltTask(const std::string& fname):filename(fname)
   {
   }
 
   virtual void runTask(fltThreadPool* tp) = 0;
 
+  void doLoadFlt(fltThreadPool* tp);
+    void computeExtent(flt* of, fltExtent* xtent, flt_node* node);
+    void computeNodeExtent(flt* of, fltExtent* xtent, flt_node* node);
+    bool findSpecificNode(flt_node* node, const std::string& lodname, int nodetype, flt_node** outNode);
+
+  bool doFillHeight(fltThreadPool* tp);
+    void fillNodeTris(flt_node* node, fltTileInfo* p);
+    void fillTri(double* v0, double* v1, double* v2, fltTileInfo* p);
+    void fillTriStep(double t, fltTileInfo* p);
+    void fillLineStep(double t, double* a, double* d, double* xyz);
+    void fillMapXY(double _x, double _y, int* x, int *y, fltTileInfo* p);
+    void fillMapPoint(double* xyz, fltTileInfo* p);
+    double computeStep(double* v0, double *v1, double* v2, fltTileInfo* p);
+
+  void writeFileFormat(int format, const char* finalname, int w, int h, int d, uint8_t* data);  
+  void doReleaseFlt( fltThreadPool* tp ) ;
+
   std::string filename;
-};
-
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-struct fltTaskFlt2Elev : public fltThreadBaseTask
-{
-  fltTaskFlt2Elev(const std::string& f)
-    : fltThreadBaseTask(f)
-  {
-  }
-  
-  virtual void runTask(fltThreadPool* tp);
-
-  void doLoadExtent(fltThreadPool* tp);
-  void computeExtent(flt* of, fltExtent* xtent, flt_node* node);
-  void computeNodeExtent(flt* of, fltExtent* xtent, flt_node* node);
-  void flt2elev(fltThreadPool* tp);
-  void doAllocateSingleTile(fltThreadPool* tp);
-  void flt2dem(fltThreadPool* tp, flt* of){ tp=0; of=0; throw "Not implemented"; }
-  bool findSpecificNode(flt_node* node, const std::string& lodname, int nodetype, flt_node** outNode);
-  void fillNodeTris(flt_node* node, fltTileInfo* p);
-  void fillTri(double* v0, double* v1, double* v2, fltTileInfo* p);
-  void fillTriStep(double t, fltTileInfo* p);
-  void fillLineStep(double t, double* a, double* d, double* xyz);
-  void mapXY(double _x, double _y, int* x, int *y, fltTileInfo* p);
-  void mapPoint(double* xyz, fltTileInfo* p);
-  double computeStep(double* v0, double *v1, double* v2, fltTileInfo* p);
-  void writeFileFormat(int format, const char* finalname, int w, int h, int d, uint8_t* data);
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -253,7 +225,7 @@ struct fltThreadPool
 
   void runcode()
   {
-    fltThreadBaseTask* task=nullptr;
+    fltTask* task=nullptr;
     while (!finish)
     {
       task=getNextTask();
@@ -268,22 +240,23 @@ struct fltThreadPool
           OutputDebugStringA("Exception\n");
         }
         --workingTasks;
+        delete task;
       }
       else
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
   }
 
-  fltThreadBaseTask* getNextTask()
+  fltTask* getNextTask()
   {
     std::lock_guard<std::mutex> lock(mtxTasks);
     if ( tasks.empty() ) return nullptr;
-    fltThreadBaseTask* t = tasks.back();
+    fltTask* t = tasks.back();
     tasks.pop_back();
     return t;
   }
 
-  void addNewTask(fltThreadBaseTask* task)
+  void addNewTask(fltTask* task)
   {
     std::lock_guard<std::mutex> lock(mtxTasks);
     tasks.push_front( task );
@@ -316,7 +289,7 @@ struct fltThreadPool
       delete t;
     }
     threads.clear();
-    for (fltThreadBaseTask* t : tasks)
+    for (fltTask* t : tasks)
       delete t;
     tasks.clear();
   }
@@ -324,7 +297,7 @@ struct fltThreadPool
   bool isWorking(){ return !tasks.empty() || workingTasks>0; }
 
   std::vector<std::thread*> threads;
-  std::deque<fltThreadBaseTask*> tasks;
+  std::deque<fltTask*> tasks;
   std::mutex mtxTasks;
   std::map<std::string, fltTileInfo> tileinfos;
   std::mutex mtxTileInfos;
@@ -343,7 +316,59 @@ struct fltThreadPool
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-void fltTaskFlt2Elev::computeNodeExtent(flt* of, fltExtent* xtent, flt_node* node)
+struct fltTaskSingleTile : public fltTask
+{
+  fltTaskSingleTile(const std::string& f) : fltTask(f){ }
+
+  virtual void runTask(fltThreadPool* tp);
+  bool doAllocateSingleTile(fltThreadPool* tp);
+  void doSaveSingleTile( fltThreadPool* tp ) ;
+};
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+struct fltTaskMosaicTileLoad : public fltTask
+{
+  fltTaskMosaicTileLoad(const std::string& fname) : fltTask(fname){ }
+  virtual void runTask(fltThreadPool* tp) { doLoadFlt(tp); }
+};
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+struct fltTaskMosaicTileFill : public fltTask
+{
+  fltTaskMosaicTileFill(const std::string& fname): fltTask(fname){ }
+  virtual void runTask(fltThreadPool* tp)
+  { 
+    doFillHeight(tp);
+    doReleaseFlt(tp);
+  }
+};
+
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+struct fltTaskMosaicSaver: public fltTask
+{
+  fltTaskMosaicSaver(const std::string& fname)
+    : fltTask(fname)
+  {
+  }
+
+  virtual void runTask(fltThreadPool* tp)
+  {
+    int w=tp->mosaic.mosaicWidth;
+    int h=tp->mosaic.mosaicHeight;
+    std::string finalname(filename);
+    if ( !tp->nodename.empty() ) finalname+="_"+tp->nodename;
+    finalname+=fltFormatExt(tp->format);
+    writeFileFormat( tp->format, finalname.c_str(), w, h, tp->depth, tp->mosaic.mosaicData);
+  }
+};
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void fltTask::computeNodeExtent(flt* of, fltExtent* xtent, flt_node* node)
 {
   if ( !node ) return;
   if ( node->ndx_pairs_count )
@@ -381,7 +406,7 @@ void fltTaskFlt2Elev::computeNodeExtent(flt* of, fltExtent* xtent, flt_node* nod
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-void fltTaskFlt2Elev::computeExtent(flt* of, fltExtent* xtent, flt_node* node)
+void fltTask::computeExtent(flt* of, fltExtent* xtent, flt_node* node)
 {
   xtent->invalidate();
   // compute extent
@@ -411,7 +436,7 @@ void fltTaskFlt2Elev::computeExtent(flt* of, fltExtent* xtent, flt_node* node)
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-void fltTaskFlt2Elev::doLoadExtent(fltThreadPool* tp)
+void fltTask::doLoadFlt(fltThreadPool* tp)
 {
   // compute extent
   flt_opts opts = {0};
@@ -455,34 +480,70 @@ void fltTaskFlt2Elev::doLoadExtent(fltThreadPool* tp)
   if (WIDTH==0) WIDTH=(int)(AR*HEIGHT);
   if (HEIGHT==0) HEIGHT=(int)(IAR*WIDTH);
   const double maxz= (tp->depth==32) ? 4294967295.0 : (double)( (1<<tp->depth)-1 ); // 1<<32 not work fine
-  const double MAPPING[3] = { 1.0/dim[0]*WIDTH, 1.0/dim[1]*HEIGHT, (dim[2]>maxz) ? (1.0/dim[2] * maxz) : (1.0) };
   
   // save tile info
   fltTileInfo p;
   p.of=of;
   p.xtent=xtent;
   p.dim[0]=dim[0]; p.dim[1]=dim[1]; p.dim[2]=dim[2];
-  p.width = WIDTH;
+  p.width = p.stride = WIDTH;
   p.height = HEIGHT;
-  p.mapping = MAPPING;
+  p.mapping[0] = 1.0/dim[0]*WIDTH;
+  p.mapping[1] = 1.0/dim[1]*HEIGHT;
+  p.mapping[2] = (dim[2]>maxz) ? (1.0/dim[2] * maxz) : (1.0);
   p.tp = tp;
   p.fltnode = specificNode;
+  p.rect[0]=0;
+  p.rect[1]=0;
+  p.rect[2]=WIDTH;
+  p.rect[3]=HEIGHT;
   tp->addTileInfo(filename,p);
 }
 
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void fltTaskSingleTile::doSaveSingleTile( fltThreadPool* tp ) 
+{
+  fltTileInfo ti;
+  while ( !tp->getTileInfo(filename, ti) )
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  // saving tile
+  std::string finalname(filename);
+  if ( !tp->nodename.empty() ) finalname+="_"+tp->nodename;
+  finalname+=fltFormatExt(tp->format);
+  writeFileFormat(tp->format, finalname.c_str(), ti.width, ti.height, tp->depth, ti.heightdata);
+  free(ti.heightdata);
+}
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-void fltTaskFlt2Elev::runTask(fltThreadPool* tp)
+void fltTaskSingleTile::runTask(fltThreadPool* tp)
 {
-  doLoadExtent(tp);
-  doAllocateSingleTile(tp);
+  doLoadFlt(tp);
+  if ( doAllocateSingleTile(tp) )
+  {
+    doFillHeight(tp);    
+    doSaveSingleTile(tp);
+  }
   doReleaseFlt(tp);
 }
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-bool fltTaskFlt2Elev::findSpecificNode(flt_node* node, const std::string& lodname, int nodetype, flt_node** outNode)
+void fltTask::doReleaseFlt( fltThreadPool* tp ) 
+{
+  fltTileInfo ti;
+  while ( !tp->getTileInfo(filename, ti) )
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  flt_release(ti.of);
+  flt_free(ti.of);
+}
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+bool fltTask::findSpecificNode(flt_node* node, const std::string& lodname, int nodetype, flt_node** outNode)
 {
   if ( !node ) return false;
   if ( (nodetype==-1 || nodetype == flt_get_op_from_node_type(node->type)) && lodname == node->name )
@@ -503,15 +564,15 @@ bool fltTaskFlt2Elev::findSpecificNode(flt_node* node, const std::string& lodnam
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-double fltTaskFlt2Elev::computeStep(double* v0, double *v1, double* v2, fltTileInfo* p)
+double fltTask::computeStep(double* v0, double *v1, double* v2, fltTileInfo* p)
 {
   double mins=DBL_MAX;
   for ( int i = 0; i < 2; ++i )
   {
     double x = i==0?v1[0]:v2[0];
     double y = i==0?v1[1]:v2[1];    
-    int xy0[2]; mapXY(v0[0],v0[1], xy0, xy0+1, p);
-    int xy1[2]; mapXY(x,y, xy1, xy1+1, p);
+    int xy0[2]; fillMapXY(v0[0],v0[1], xy0, xy0+1, p);
+    int xy1[2]; fillMapXY(x,y, xy1, xy1+1, p);
     double pa=(double)(xy1[0]-xy0[0]);
     double pb=(double)(xy1[1]-xy0[1]);    
     double lp = sqrt(pa*pa + pb*pb);
@@ -526,7 +587,7 @@ double fltTaskFlt2Elev::computeStep(double* v0, double *v1, double* v2, fltTileI
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-void fltTaskFlt2Elev::fillLineStep(double t, double* a, double* d, double* xyz)
+void fltTask::fillLineStep(double t, double* a, double* d, double* xyz)
 {
   xyz[0]=a[0]+t*d[0];
   xyz[1]=a[1]+t*d[1];
@@ -535,16 +596,22 @@ void fltTaskFlt2Elev::fillLineStep(double t, double* a, double* d, double* xyz)
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-void fltTaskFlt2Elev::mapXY(double _x, double _y, int* x, int *y, fltTileInfo* p)
+void fltTask::fillMapXY(double _x, double _y, int* x, int *y, fltTileInfo* p)
 {
-  *x = (int)( (_x - p->xtent.extent_min[0]) * p->mapping[0] ); *x = fltClamp(*x,0,p->width-1);
-  *y = (int)( (_y - p->xtent.extent_min[1]) * p->mapping[1] ); *y = fltClamp(*y,0,p->height-1);
+  int tx, ty;
+  tx = (int)( (_x - p->xtent.extent_min[0]) * p->mapping[0] ); 
+  //if ( tx < 0 || tx >= p->width ) return false;
+  *x = tx;
+
+  ty = (int)( (_y - p->xtent.extent_min[1]) * p->mapping[1] ); 
+  //if ( ty < 0 || ty >= p->height ) return false;
+  *y = ty;
 }
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 template<typename T>
-void mapPoint_t(double zval, double zmin, double mapping, int offs, T* data)
+void fillMapPointTemplate(double zval, double zmin, double mapping, int offs, T* data)
 {
   T z, oldz;
   z = (T)(int)( (zval-zmin)*mapping);
@@ -554,23 +621,24 @@ void mapPoint_t(double zval, double zmin, double mapping, int offs, T* data)
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-void fltTaskFlt2Elev::mapPoint(double* xyz, fltTileInfo* p)
+void fltTask::fillMapPoint(double* xyz, fltTileInfo* p)
 {
   int x, y;
   int offs;
-  mapXY(xyz[0], xyz[1], &x, &y, p);  
-  offs = y*p->width+x;
+  fillMapXY(xyz[0], xyz[1], &x, &y, p);
+  x+=p->rect[0]; y+=p->rect[1];
+  offs = y*p->stride+x;
   switch ( p->tp->depth )
   {
-  case 8 :mapPoint_t<uint8_t>(xyz[2], p->xtent.extent_min[2], p->mapping[2], offs, (uint8_t*)p->heightdata); break;
-  case 16:mapPoint_t<uint16_t>(xyz[2], p->xtent.extent_min[2], p->mapping[2], offs, (uint16_t*)p->heightdata); break;
-  case 32:mapPoint_t<uint32_t>(xyz[2], p->xtent.extent_min[2], p->mapping[2], offs, (uint32_t*)p->heightdata); break;
+  case 8 :fillMapPointTemplate<uint8_t>(xyz[2], p->xtent.extent_min[2], p->mapping[2], offs, (uint8_t*)p->heightdata); break;
+  case 16:fillMapPointTemplate<uint16_t>(xyz[2], p->xtent.extent_min[2], p->mapping[2], offs, (uint16_t*)p->heightdata); break;
+  case 32:fillMapPointTemplate<uint32_t>(xyz[2], p->xtent.extent_min[2], p->mapping[2], offs, (uint32_t*)p->heightdata); break;
   }
 }
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-void fltTaskFlt2Elev::fillTriStep(double t, fltTileInfo* p)
+void fltTask::fillTriStep(double t, fltTileInfo* p)
 {
   int i;
   double s=0.0;
@@ -593,7 +661,7 @@ void fltTaskFlt2Elev::fillTriStep(double t, fltTileInfo* p)
     fillLineStep(s,a,d,xyz); // gets the point
 
     // every point xyz to the heightmap
-    mapPoint(xyz,p);
+    fillMapPoint(xyz,p);
 
     // advance in ray
     s += p->step;
@@ -606,7 +674,7 @@ void fltTaskFlt2Elev::fillTriStep(double t, fltTileInfo* p)
 // to paint, so Bresenham 3D.
 // Example: http://www.mathworks.com/matlabcentral/fileexchange/21057-3d-bresenhams-line-generation/content/bresenham_line3d.m
 // Right now it computes the smallest step 
-void fltTaskFlt2Elev::fillTri(double* v0, double* v1, double* v2, fltTileInfo* p)
+void fltTask::fillTri(double* v0, double* v1, double* v2, fltTileInfo* p)
 {
   int i;
 
@@ -636,7 +704,7 @@ void fltTaskFlt2Elev::fillTri(double* v0, double* v1, double* v2, fltTileInfo* p
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 #define cpoly_zcross(x0,y0, x1, y1, x2, y2) (((x1)-(x0))*((y2)-(y1)) - ((y1)-(y0))*((x2)-(x1)))
-void fltTaskFlt2Elev::fillNodeTris(flt_node* node, fltTileInfo* p)
+void fltTask::fillNodeTris(flt_node* node, fltTileInfo* p)
 {
   if ( !node ) return;
   flt* of = p->of;
@@ -696,19 +764,7 @@ void fltTaskFlt2Elev::fillNodeTris(flt_node* node, fltTileInfo* p)
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-const char* fltFormatExt(int fmt)
-{
-  switch ( fmt )
-  {
-    case FORMAT_RAW: return ".raw";
-    case FORMAT_PNG: return ".png";
-  }
-  return ".heightmap";
-}
-
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-void fltTaskFlt2Elev::writeFileFormat(int format, const char* finalname, int w, int h, int d, uint8_t* data)
+void fltTask::writeFileFormat(int format, const char* finalname, int w, int h, int d, uint8_t* data)
 {
   switch ( format )
   {
@@ -730,25 +786,126 @@ void fltTaskFlt2Elev::writeFileFormat(int format, const char* finalname, int w, 
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-void fltTaskFlt2Elev::doAllocateSingleTile(fltThreadPool* tp)
+bool fltTask::doFillHeight(fltThreadPool* tp)
+{
+  fltTileInfo ti;
+  while ( !tp->getTileInfo(filename, ti) )
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  // go through all triangles under node  
+  fillNodeTris(ti.fltnode, &ti);
+  return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+bool fltTaskSingleTile::doAllocateSingleTile(fltThreadPool* tp)
 {
   fltTileInfo ti;
   while ( !tp->getTileInfo(filename, ti) )
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
   // allocate tile memory
-  uint8_t* heightdata = (uint8_t*)calloc( 1, numpixels*(tp->depth/8) );
-  if ( !heightdata ){ fprintf( stderr, "out of mem: %s\n", filename.c_str() ); return; }
+  int numpixels = ti.width*ti.height;
+  if ( numpixels <= 0 ) 
+  {
+    fprintf( stderr, "Invalid num pixels: %s\n", filename.c_str() );
+    return false;
+  }
+  if ( ti.heightdata )
+  {
+    fprintf( stderr, "Height data should be null: %s\n", filename.c_str() );
+    return false;
+  }
 
-  // go through all triangles under node  
-  fillNodeTris(specificNode,&p);
+  ti.heightdata= (uint8_t*)calloc( 1, numpixels*(tp->depth/8) );
+  if ( !ti.heightdata )
+  { 
+    fprintf( stderr, "out of mem: %s\n", filename.c_str() ); 
+    return false; 
+  }  
+  tp->addTileInfo(filename,ti);
 
-  // saving tile
-  std::string finalname(filename);
-  if ( !tp->nodename.empty() ) finalname+="_"+tp->nodename;
-  finalname+=fltFormatExt(tp->format);
-  writeFileFormat(tp->format, finalname.c_str(), WIDTH, HEIGHT, tp->depth, heightdata);
-  free(heightdata);
+  return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+bool fltMosaic::allocMosaic(fltThreadPool& tp, const std::vector<std::string>& files)
+{
+  if ( mosaicWc.empty() )
+    return false;
+
+  std::map< std::pair<int,int>, std::string > pair2file;
+
+  // max no. cols and rows
+  int rows=-1, cols=-1;
+  int r, c;
+  for (const std::string& f : files )
+  {
+    getRowCol(f,&r,&c);
+    if ( r>rows ) rows = r;
+    if ( c>cols ) cols = c;
+    if ( r>=0 && c>=0 )
+      pair2file[std::make_pair(r,c)] = f;
+  }
+  ++rows; ++cols;
+
+  if ( rows <= 0 || cols <= 0 )
+  {
+    fprintf( stderr, "Invalid num of rows/cols (%d/%d)\n", rows, cols );
+    return false;
+  }
+
+  // max tile width/height
+  fltTileInfo tinfo;
+  int maxtilew=-1, maxtileh=-1;
+  for ( r=0; r<rows; ++r )
+  {
+    for (c=0; c<cols; ++c)
+    {
+      auto it = pair2file.find(std::make_pair(r,c));
+      if ( it == pair2file.end() ) continue;
+      if ( tp.getTileInfo(it->second,tinfo) )
+      {
+        if ( tinfo.width > maxtilew ) maxtilew = tinfo.width;
+        if ( tinfo.height> maxtileh ) maxtileh = tinfo.height;
+      }
+    }
+  }
+  
+  mosaicWidth = cols*maxtilew;
+  mosaicHeight= rows*maxtileh;
+  if ( mosaicWidth <= 0 || mosaicHeight <= 0 )
+  {
+    fprintf( stderr, "Invalid width/height for mosaic (%d/%d) \n", mosaicWidth, mosaicHeight );
+    return false;
+  }
+
+  // allocating big image data
+  mosaicData = (uint8_t*)calloc(1, mosaicHeight*mosaicWidth*(tp.depth>>3));
+  if ( !mosaicData )
+  {
+    fprintf( stderr, "Out of mem allocating mosaic image (%d/%d) depth=%d\n", mosaicWidth, mosaicHeight, tp.depth );
+    return false;
+  }
+
+  // adjust left/top of tile rectangles and setting the pointer to shared image data
+  for (auto it:pair2file)
+  {
+    if ( tp.getTileInfo(it.second,tinfo) )
+    {
+      r = it.first.first;
+      c = it.first.second;
+      tinfo.rect[0]=c*maxtilew;
+      tinfo.rect[1]=r*maxtileh;
+      tinfo.heightdata = mosaicData;
+      tinfo.stride = mosaicWidth;
+      tp.addTileInfo(it.second,tinfo);
+    }
+  }
+  
+  return true;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -769,31 +926,72 @@ double fltGetTime()
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
+const char* fltFormatExt(int fmt)
+{
+  switch ( fmt )
+  {
+  case FORMAT_RAW: return ".raw";
+  case FORMAT_PNG: return ".png";
+  }
+  return ".heightmap";
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void doMainThreadWait(fltThreadPool& tp)
+{
+  // wait until cores finished
+  const char* anim="|\\-/";
+  int c=0;
+  do
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    fprintf(stderr, "\r                                 \r");
+    fprintf(stderr, "Processing: %c", anim[c%4]);
+    ++c;
+  } while ( tp.isWorking() );
+}
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 void doMosaicTilesProcess(fltThreadPool& tp, const std::vector<std::string>& files)
 {
+  double t0=fltGetTime();
+  // load extent of tiles in the mosaic
+  for ( const std::string& f : files )
+    tp.addNewTask(new fltTaskMosaicTileLoad(f));
 
+  // generate big image (after all loaded)
+  doMainThreadWait(tp);
+  if ( !tp.mosaic.allocMosaic(tp, files) )
+    return;
+
+  // fill every tile in the mosaic
+  for ( const std::string& f : files )
+    tp.addNewTask(new fltTaskMosaicTileFill(f));
+
+  // save big image
+  doMainThreadWait(tp);
+  tp.addNewTask(new fltTaskMosaicSaver("mosaic"));
+
+  // stats
+  doMainThreadWait(tp);
+  tp.mosaic.deallocMosaic();
+  printf( "\n\nTime : %g secs\n", (fltGetTime()-t0)/1000.0);
+  printf( "Triangles (ok/culled): %d/%d\n", tp.numtris, tp.numtrisbf);
 }
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 void doSingleTilesProcess(fltThreadPool& tp, const std::vector<std::string>& files)
 {
+  double t0=fltGetTime();
   // one task per file
   for ( const std::string& f : files )
-    tp.addNewTask(new fltTaskFlt2Elev(f));
+    tp.addNewTask(new fltTaskSingleTile(f));
 
-  // wait until cores finished
-  double t0=fltGetTime();
-  const char* cha="|\\-/";
-  int c=0;
-  do
-  {
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    fprintf(stderr, "\r                                 \r");
-    fprintf(stderr, "Processing: %c", cha[c%4]);
-    ++c;
-  } while ( tp.isWorking() );
-
+  doMainThreadWait(tp);
   printf( "\n\nTime : %g secs\n", (fltGetTime()-t0)/1000.0);
   printf( "Triangles (ok/culled): %d/%d\n", tp.numtris, tp.numtrisbf);
 }
@@ -898,7 +1096,7 @@ int main(int argc, const char** argv)
   if ( format == FORMAT_DEM )
   {
     fprintf( stderr, "Not implemented DEM format\n" );
-    return;
+    return -1;
   }
   if (culling< CULLING_NONE || culling > CULLING_CCW) culling=CULLING_CCW;
   if ( depth != 8 && depth != 16 && depth != 32 ) depth = 8;
