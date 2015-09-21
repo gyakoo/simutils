@@ -1,9 +1,9 @@
 
 
+#define NOMINMAX
 #if defined(_DEBUG) && !defined(_WIN64)
 #include <vld.h>
 #endif
-
 #include <stdio.h>
 #include <stdlib.h>
 //#define FLT_NO_OPNAMES
@@ -44,7 +44,6 @@ enum
 };
 
 struct fltThreadPool;
-struct fltThreadTask;
 double fltGetTime();
 
 template<typename T> T fltClamp(T v, T _m, T _M){ return v<_m?_m:(v>_M?_M:v);}
@@ -99,15 +98,22 @@ struct fltExtent
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-struct fltNodeFillParam
+struct fltTileInfo
 {
+  fltTileInfo()
+    : of(nullptr), heightdata(nullptr), tp(nullptr), fltnode(nullptr)
+    , v1(nullptr), from1(nullptr), v2(nullptr), from2(nullptr)
+    , mapping(nullptr)
+  { }
+
   flt* of;
   uint8_t* heightdata;
   fltExtent xtent;
   double dim[3];
   int width, height;
+  int rect[4]; // left,top,width,height
   fltThreadPool* tp;
-
+  flt_node* fltnode;
   double *v1, *from1;
   double *v2, *from2;
   double step;
@@ -116,51 +122,116 @@ struct fltNodeFillParam
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-std::map<std::string, fltNodeFillParam> mosaicmap;
-std::mutex mtxMosaic;
-int mosaicCols=-1;
-int mosaicRows=-1;
-void addMosaicInfo(const std::string& fname, const fltNodeFillParam& info)
+struct fltMosaic
 {
-  std::lock_guard<std::mutex> lock(mtxMosaic);
-  mosaicmap[fname]=info;
-}
+  int mosaicCols;
+  int mosaicRows;
+  std::string mosaicWc;
 
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-struct fltThreadTask
-{
-  enum f2dTaskType { TASK_NONE=-1, TASK_FLT2ELEV=0};
-  f2dTaskType type;
-  std::string filename;
+  fltMosaic():mosaicCols(-1), mosaicRows(-1){}
 
-  fltThreadTask():type(TASK_NONE){}
-  fltThreadTask(f2dTaskType tt, const std::string& f)
-    :type(tt), filename(f){}
-  
-  void runTask(fltThreadPool* tp)
+  void getRowCol(const std::string& name, int* row, int* col)
   {
-    tp=tp;
-    switch( type )
+    size_t i=0,j=0;
+    char tmp[64]={0};
+    int nc,mc,nmc;
+    int t;
+    *row = *col = -1;
+    for (;i<mosaicWc.length();++i,++j)
     {
-    case TASK_FLT2ELEV: flt2elev(tp); break;
+      mc = tolower(mosaicWc[i]);
+      nc = tolower(name[j]);
+      if ( nc!=mc && mc!='$') return; // name and mosaicwc should match
+      if ( mc=='$' )
+      {
+        if ( i >= mosaicWc.length()-1 ) return;
+        mc=tolower(mosaicWc[++i]);
+        if ( mc == 'r' || mc == 'c' )
+        {
+          nmc=mosaicWc[++i];
+          t=0;
+          while (j<name.length() && tolower(name[j])!=nmc) 
+          {
+            tmp[t++]=name[j];
+            ++j;
+          }
+          tmp[t]=0;
+          int* w = mc=='r' ? row : col;
+          *w = atoi(tmp);
+        }
+      }
     }
   }
 
+  void generateMosaic(const std::string& name, fltThreadPool* tp)
+  {
+    if ( mosaicWc.empty() )
+      return;
+
+    int widthpixels=-1, heightpixels = -1;
+    // compute size for mosaic image
+    {
+      // get the biggest tile
+      int maxwidth=-1, maxheight=-1;
+      
+      widthpixels = maxwidth*mosaicCols;
+      heightpixels= maxheight*mosaicRows;
+    }
+
+    if ( widthpixels <= 0 || heightpixels <= 0 )
+      return;
+
+
+
+    // for each image tile in mosaicmap
+    //    compute the row/colum out of mosaic wildcard and tile name
+    //    blit the image into the mosaic row/colum
+    //    deallocate tile
+    //    
+    // save the mosaic image into the destination format
+  }
+
+};
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+struct fltThreadBaseTask
+{
+  fltThreadBaseTask(const std::string& fname):filename(fname)
+  {
+  }
+
+  virtual void runTask(fltThreadPool* tp) = 0;
+
+  std::string filename;
+};
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+struct fltTaskFlt2Elev : public fltThreadBaseTask
+{
+  fltTaskFlt2Elev(const std::string& f)
+    : fltThreadBaseTask(f)
+  {
+  }
+  
+  virtual void runTask(fltThreadPool* tp);
+
+  void doLoadExtent(fltThreadPool* tp);
   void computeExtent(flt* of, fltExtent* xtent, flt_node* node);
   void computeNodeExtent(flt* of, fltExtent* xtent, flt_node* node);
   void flt2elev(fltThreadPool* tp);
-  void flt2png(fltThreadPool* tp, flt* of);
-  void flt2height(fltThreadPool* tp, flt* of);
+  void doAllocateSingleTile(fltThreadPool* tp);
   void flt2dem(fltThreadPool* tp, flt* of){ tp=0; of=0; throw "Not implemented"; }
   bool findSpecificNode(flt_node* node, const std::string& lodname, int nodetype, flt_node** outNode);
-  void fillNodeTris(flt_node* node, fltNodeFillParam* p);
-  void fillTri(double* v0, double* v1, double* v2, fltNodeFillParam* p);
-  void fillTriStep(double t, fltNodeFillParam* p);
+  void fillNodeTris(flt_node* node, fltTileInfo* p);
+  void fillTri(double* v0, double* v1, double* v2, fltTileInfo* p);
+  void fillTriStep(double t, fltTileInfo* p);
   void fillLineStep(double t, double* a, double* d, double* xyz);
-  void mapXY(double _x, double _y, int* x, int *y, fltNodeFillParam* p);
-  void mapPoint(double* xyz, fltNodeFillParam* p);
-  double computeStep(double* v0, double *v1, double* v2, fltNodeFillParam* p);
+  void mapXY(double _x, double _y, int* x, int *y, fltTileInfo* p);
+  void mapPoint(double* xyz, fltTileInfo* p);
+  double computeStep(double* v0, double *v1, double* v2, fltTileInfo* p);
+  void writeFileFormat(int format, const char* finalname, int w, int h, int d, uint8_t* data);
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -177,20 +248,21 @@ struct fltThreadPool
     threads.reserve(numthreads);
     for(int i = 0; i < numthreads; ++i)
       threads.push_back(new std::thread(&fltThreadPool::runcode,this));  
-    res[0]=res[1]=-1;
+    forceDim[0]=forceDim[1]=-1;
   }
 
   void runcode()
   {
-    fltThreadTask task;
+    fltThreadBaseTask* task=nullptr;
     while (!finish)
     {
-      if ( getNextTask(&task) )
+      task=getNextTask();
+      if ( task )
       {
         ++workingTasks;
         try
         {
-          task.runTask(this);
+          task->runTask(this);
         }catch(...)
         {
           OutputDebugStringA("Exception\n");
@@ -202,19 +274,37 @@ struct fltThreadPool
     }
   }
 
-  bool getNextTask(fltThreadTask* t)
+  fltThreadBaseTask* getNextTask()
   {
     std::lock_guard<std::mutex> lock(mtxTasks);
-    if ( tasks.empty() ) return false;
-    *t = tasks.back();
+    if ( tasks.empty() ) return nullptr;
+    fltThreadBaseTask* t = tasks.back();
     tasks.pop_back();
-    return true;
+    return t;
   }
 
-  void addNewTask(const fltThreadTask& task)
+  void addNewTask(fltThreadBaseTask* task)
   {
     std::lock_guard<std::mutex> lock(mtxTasks);
     tasks.push_front( task );
+  }
+
+  bool getTileInfo(const std::string& name, fltTileInfo& outTi)
+  {
+    std::lock_guard<std::mutex> lock(mtxTileInfos);
+    auto it=tileinfos.find(name);
+    if ( it != tileinfos.end() )
+    {
+      outTi = it->second;
+      return true;
+    }
+    return false;
+  }
+
+  void addTileInfo(const std::string& fname, const fltTileInfo& ti)
+  {
+    std::lock_guard<std::mutex> lock(mtxTileInfos);
+    tileinfos[fname] = ti;
   }
   
   void deinit()
@@ -226,30 +316,34 @@ struct fltThreadPool
       delete t;
     }
     threads.clear();
+    for (fltThreadBaseTask* t : tasks)
+      delete t;
     tasks.clear();
   }
 
   bool isWorking(){ return !tasks.empty() || workingTasks>0; }
 
   std::vector<std::thread*> threads;
-  std::deque<fltThreadTask> tasks;    
+  std::deque<fltThreadBaseTask*> tasks;
   std::mutex mtxTasks;
+  std::map<std::string, fltTileInfo> tileinfos;
+  std::mutex mtxTileInfos;
   std::atomic_int workingTasks;
   std::atomic_int numtris;
   std::atomic_int numtrisbf;
   std::string nodename;
-  int res[2];
-  volatile int format;
+  fltMosaic mosaic;
+  int forceDim[2];
+  int format;
   bool finish;
   int nodetype;
   int culling;
   int depth;
-  std::string mosaic;
 };
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-void fltThreadTask::computeNodeExtent(flt* of, fltExtent* xtent, flt_node* node)
+void fltTaskFlt2Elev::computeNodeExtent(flt* of, fltExtent* xtent, flt_node* node)
 {
   if ( !node ) return;
   if ( node->ndx_pairs_count )
@@ -285,7 +379,9 @@ void fltThreadTask::computeNodeExtent(flt* of, fltExtent* xtent, flt_node* node)
   }
 }
 
-void fltThreadTask::computeExtent(flt* of, fltExtent* xtent, flt_node* node)
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void fltTaskFlt2Elev::computeExtent(flt* of, fltExtent* xtent, flt_node* node)
 {
   xtent->invalidate();
   // compute extent
@@ -313,30 +409,80 @@ void fltThreadTask::computeExtent(flt* of, fltExtent* xtent, flt_node* node)
   }
 }
 
-void fltThreadTask::flt2elev(fltThreadPool* tp)
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void fltTaskFlt2Elev::doLoadExtent(fltThreadPool* tp)
 {
   // compute extent
   flt_opts opts = {0};
   opts.pflags = FLT_OPT_PAL_VERTEX | FLT_OPT_PAL_VTX_POSITION;
   opts.hflags = FLT_OPT_HIE_ALL_NODES;
   opts.dfaces_size = 1543;
-  flt of = {0};
+  flt* of = (flt*)calloc(1,sizeof(flt));
+  if ( !of ) return;
 
   // load file
-  flt_load_from_filename(filename.c_str(), &of, &opts);
+  flt_load_from_filename(filename.c_str(), of, &opts);
 
-  switch ( tp->format )
+  // it
+  if ( !of->hie )
   {
-  case FORMAT_DEM: flt2dem(tp,&of); break;
-  
-  case FORMAT_PNG: 
-  case FORMAT_RAW: flt2height(tp,&of); break;
+    fprintf( stderr, "No nodes loaded in flt: %s\n", filename.c_str() );
+    return;
   }
 
-  flt_release(&of);
+  // look for specific node if user passed non-empty parameter
+  flt_node* specificNode = of->hie->node_root;
+  if ( !tp->nodename.empty() )
+    findSpecificNode(of->hie->node_root, tp->nodename, tp->nodetype, &specificNode);
+
+  if ( !specificNode )
+  {
+    fprintf( stderr, "Invalid node to look geometry. %s\n", filename.c_str() );
+    return;
+  }
+
+  // compute dimension of image
+  fltExtent xtent;
+  computeExtent(of,&xtent,specificNode);
+  double dim[3];
+  xtent.getDimension(dim);
+  const double AR = dim[0]/dim[1];
+  const double IAR= dim[1]/dim[0];
+  int WIDTH = tp->forceDim[0]<0 ? (int)dim[0] : tp->forceDim[0];
+  int HEIGHT = tp->forceDim[1]<0 ? (int)dim[1] : tp->forceDim[1];
+  if (WIDTH==0 && HEIGHT==0) WIDTH = (int)dim[0];
+  if (WIDTH==0) WIDTH=(int)(AR*HEIGHT);
+  if (HEIGHT==0) HEIGHT=(int)(IAR*WIDTH);
+  const double maxz= (tp->depth==32) ? 4294967295.0 : (double)( (1<<tp->depth)-1 ); // 1<<32 not work fine
+  const double MAPPING[3] = { 1.0/dim[0]*WIDTH, 1.0/dim[1]*HEIGHT, (dim[2]>maxz) ? (1.0/dim[2] * maxz) : (1.0) };
+  
+  // save tile info
+  fltTileInfo p;
+  p.of=of;
+  p.xtent=xtent;
+  p.dim[0]=dim[0]; p.dim[1]=dim[1]; p.dim[2]=dim[2];
+  p.width = WIDTH;
+  p.height = HEIGHT;
+  p.mapping = MAPPING;
+  p.tp = tp;
+  p.fltnode = specificNode;
+  tp->addTileInfo(filename,p);
 }
 
-bool fltThreadTask::findSpecificNode(flt_node* node, const std::string& lodname, int nodetype, flt_node** outNode)
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void fltTaskFlt2Elev::runTask(fltThreadPool* tp)
+{
+  doLoadExtent(tp);
+  doAllocateSingleTile(tp);
+  doReleaseFlt(tp);
+}
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+bool fltTaskFlt2Elev::findSpecificNode(flt_node* node, const std::string& lodname, int nodetype, flt_node** outNode)
 {
   if ( !node ) return false;
   if ( (nodetype==-1 || nodetype == flt_get_op_from_node_type(node->type)) && lodname == node->name )
@@ -355,7 +501,9 @@ bool fltThreadTask::findSpecificNode(flt_node* node, const std::string& lodname,
   return false;
 }
 
-double fltThreadTask::computeStep(double* v0, double *v1, double* v2, fltNodeFillParam* p)
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+double fltTaskFlt2Elev::computeStep(double* v0, double *v1, double* v2, fltTileInfo* p)
 {
   double mins=DBL_MAX;
   for ( int i = 0; i < 2; ++i )
@@ -376,19 +524,25 @@ double fltThreadTask::computeStep(double* v0, double *v1, double* v2, fltNodeFil
   return ( mins < DBL_MAX ) ? mins*0.5f : 0.005;
 }
 
-void fltThreadTask::fillLineStep(double t, double* a, double* d, double* xyz)
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void fltTaskFlt2Elev::fillLineStep(double t, double* a, double* d, double* xyz)
 {
   xyz[0]=a[0]+t*d[0];
   xyz[1]=a[1]+t*d[1];
   xyz[2]=a[2]+t*d[2];
 }
 
-void fltThreadTask::mapXY(double _x, double _y, int* x, int *y, fltNodeFillParam* p)
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void fltTaskFlt2Elev::mapXY(double _x, double _y, int* x, int *y, fltTileInfo* p)
 {
   *x = (int)( (_x - p->xtent.extent_min[0]) * p->mapping[0] ); *x = fltClamp(*x,0,p->width-1);
   *y = (int)( (_y - p->xtent.extent_min[1]) * p->mapping[1] ); *y = fltClamp(*y,0,p->height-1);
 }
 
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 template<typename T>
 void mapPoint_t(double zval, double zmin, double mapping, int offs, T* data)
 {
@@ -398,7 +552,9 @@ void mapPoint_t(double zval, double zmin, double mapping, int offs, T* data)
   if ( z > oldz ) data[offs] = z;
 }
 
-void fltThreadTask::mapPoint(double* xyz, fltNodeFillParam* p)
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void fltTaskFlt2Elev::mapPoint(double* xyz, fltTileInfo* p)
 {
   int x, y;
   int offs;
@@ -412,7 +568,9 @@ void fltThreadTask::mapPoint(double* xyz, fltNodeFillParam* p)
   }
 }
 
-void fltThreadTask::fillTriStep(double t, fltNodeFillParam* p)
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void fltTaskFlt2Elev::fillTriStep(double t, fltTileInfo* p)
 {
   int i;
   double s=0.0;
@@ -442,12 +600,13 @@ void fltThreadTask::fillTriStep(double t, fltNodeFillParam* p)
   }
 }
 
+//////////////////////////////////////////////////////////////////////////
 // It's a very unoptimized way to raster a triangle.
 // Use Bresenham algorithm instead, but adapted to get the Z of the original triangle
 // to paint, so Bresenham 3D.
 // Example: http://www.mathworks.com/matlabcentral/fileexchange/21057-3d-bresenhams-line-generation/content/bresenham_line3d.m
 // Right now it computes the smallest step 
-void fltThreadTask::fillTri(double* v0, double* v1, double* v2, fltNodeFillParam* p)
+void fltTaskFlt2Elev::fillTri(double* v0, double* v1, double* v2, fltTileInfo* p)
 {
   int i;
 
@@ -474,8 +633,10 @@ void fltThreadTask::fillTri(double* v0, double* v1, double* v2, fltNodeFillParam
   fillTriStep(1.0, p);
 }
 
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 #define cpoly_zcross(x0,y0, x1, y1, x2, y2) (((x1)-(x0))*((y2)-(y1)) - ((y1)-(y0))*((x2)-(x1)))
-void fltThreadTask::fillNodeTris(flt_node* node, fltNodeFillParam* p)
+void fltTaskFlt2Elev::fillNodeTris(flt_node* node, fltTileInfo* p)
 {
   if ( !node ) return;
   flt* of = p->of;
@@ -533,6 +694,8 @@ void fltThreadTask::fillNodeTris(flt_node* node, fltNodeFillParam* p)
   }
 }
 
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 const char* fltFormatExt(int fmt)
 {
   switch ( fmt )
@@ -543,7 +706,9 @@ const char* fltFormatExt(int fmt)
   return ".heightmap";
 }
 
-void fltWriteFormat(int format, const char* finalname, int w, int h, int d, uint8_t* data)
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void fltTaskFlt2Elev::writeFileFormat(int format, const char* finalname, int w, int h, int d, uint8_t* data)
 {
   switch ( format )
   {
@@ -563,157 +728,28 @@ void fltWriteFormat(int format, const char* finalname, int w, int h, int d, uint
   }
 }
 
-void fltThreadTask::flt2height(fltThreadPool* tp, flt* of)
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void fltTaskFlt2Elev::doAllocateSingleTile(fltThreadPool* tp)
 {
-  if ( !of->hie )
-  {
-    fprintf( stderr, "No nodes loaded in flt: %s\n", filename.c_str() );
-    return;
-  }
-
-  // look for specific node if user passed non-empty parameter
-  flt_node* specificNode = of->hie->node_root;
-  if ( !tp->nodename.empty() )
-    findSpecificNode(of->hie->node_root, tp->nodename, tp->nodetype, &specificNode);
-
-  fltExtent xtent;
-  computeExtent(of,&xtent,specificNode);
-
-  // grayscale, one byte per pixel
-  double dim[3];
-  xtent.getDimension(dim);
-  const double AR = dim[0]/dim[1];
-  const double IAR= dim[1]/dim[0];
-  int WIDTH = tp->res[0]<0 ? (int)dim[0] : tp->res[0];
-  int HEIGHT = tp->res[1]<0 ? (int)dim[1] : tp->res[1];
-  if (WIDTH==0 && HEIGHT==0) WIDTH = (int)dim[0];
-  if (WIDTH==0) WIDTH=(int)(AR*HEIGHT);
-  if (HEIGHT==0) HEIGHT=(int)(IAR*WIDTH);
-  double maxz=255.0;
-  switch(tp->depth) // because 1<<depth does not work in some archs for depth=32
-  {
-  case 8: maxz=255.0; break;
-  case 16: maxz=65535.0; break;
-  case 32: maxz=4294967295.0; break;
-  }
-  double MAPPING[3] = { 1.0/dim[0]*WIDTH, 1.0/dim[1]*HEIGHT, 1.0 };
-  if ( dim[2] > maxz )
-    MAPPING[2]=1.0/dim[2] * maxz;
-  const int numpixels = WIDTH*HEIGHT;
-  if ( numpixels<=0 )
-  {
-    fprintf(stderr, "Num pixels invalid for: %s. dim=%g %g %g\n", filename.c_str(), dim[0], dim[1], dim[2]);
-    return;
-  }
-
+  fltTileInfo ti;
+  while ( !tp->getTileInfo(filename, ti) )
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    
+  // allocate tile memory
   uint8_t* heightdata = (uint8_t*)calloc( 1, numpixels*(tp->depth/8) );
   if ( !heightdata ){ fprintf( stderr, "out of mem: %s\n", filename.c_str() ); return; }
 
-  if ( !specificNode )
-  {
-    fprintf( stderr, "Invalid node to look geometry. %s\n", filename.c_str() );
-    return;
-  }
-
-  // go through all triangles under node
-  fltNodeFillParam p;
-  p.of=of;
-  p.heightdata=heightdata;
-  p.xtent=xtent;
-  p.dim[0]=dim[0]; p.dim[1]=dim[1]; p.dim[2]=dim[2];
-  p.width = WIDTH;
-  p.height = HEIGHT;
-  p.mapping = MAPPING;
-  p.tp = tp;
+  // go through all triangles under node  
   fillNodeTris(specificNode,&p);
 
+  // saving tile
   std::string finalname(filename);
-  if ( !tp->nodename.empty() )
-    finalname+="_"+tp->nodename;
+  if ( !tp->nodename.empty() ) finalname+="_"+tp->nodename;
   finalname+=fltFormatExt(tp->format);
-
-  // if no mosaic, not write this heightmap and keep it in memory yet
-  // it can be very heavy to have many big textures in memory, so there's left an implementation
-  // that if we force width/height (-d option) then we can know beforehand the total size of the 
-  // big texture and do the blitting in separated thread and deallocate here.
-  if ( tp->mosaic.empty() )
-  {
-    fltWriteFormat(tp->format, finalname.c_str(), WIDTH, HEIGHT, tp->depth, heightdata);
-    free(heightdata);
-  }
-  else
-  {
-    // we save this tile info (contain the actual height data)
-    p.mapping=nullptr;
-    p.v1 = p.v2 = nullptr;
-    p.from1 = p.from2 = nullptr;
-    addMosaicInfo(filename,p);
-  }
+  writeFileFormat(tp->format, finalname.c_str(), WIDTH, HEIGHT, tp->depth, heightdata);
+  free(heightdata);
 }
-
-
-// void fltThreadTask::flt2png(fltThreadPool* tp, flt* of)
-// {
-//   if ( !of->hie )
-//   {
-//     fprintf( stderr, "No nodes loaded in flt: %s\n", filename.c_str() );
-//     return;
-//   }
-// 
-//   // look for specific node if user passed non-empty parameter
-//   flt_node* specificNode = of->hie->node_root;
-//   if ( !tp->nodename.empty() )
-//     findSpecificNode(of->hie->node_root, tp->nodename, tp->nodetype, &specificNode);
-// 
-//   fltExtent xtent;
-//   computeExtent(of,&xtent,specificNode);
-// 
-//   // grayscale, one byte per pixel
-//   double dim[3];
-//   xtent.getDimension(dim);
-//   const double AR = dim[0]/dim[1];
-//   const double IAR= dim[1]/dim[0];
-//   int WIDTH = tp->res[0]<0 ? (int)dim[0] : tp->res[0];
-//   int HEIGHT = tp->res[1]<0 ? (int)dim[1] : tp->res[1];
-//   if (WIDTH==0 && HEIGHT==0) WIDTH = (int)dim[0];
-//   if (WIDTH==0) WIDTH=(int)(AR*HEIGHT);
-//   if (HEIGHT==0) HEIGHT=(int)(IAR*WIDTH);
-//   const double MAPPING[3] = { 1.0/dim[0]*WIDTH, 1.0/dim[1]*HEIGHT, 1.0/dim[2] * 255.0 };
-//   const int numpixels = WIDTH*HEIGHT;
-//   if ( numpixels<=0 )
-//   {
-//     fprintf(stderr, "Num pixels invalid for: %s. dim=%g %g %g\n", filename.c_str(), dim[0], dim[1], dim[2]);
-//     return;
-//   }
-// 
-//   uint8_t* lumdata = (uint8_t*)calloc( 1, numpixels );
-//   if ( !lumdata ){ fprintf( stderr, "out of mem: %s\n", filename.c_str() ); return; }
-//     
-//   if ( !specificNode )
-//   {
-//     fprintf( stderr, "Invalid node to look geometry. %s\n", filename.c_str() );
-//     return;
-//   }
-// 
-//   // go through all triangles under node
-//   fltNodeFillParam p;
-//   p.of=of;
-//   p.lumdata=lumdata;
-//   p.xtent=&xtent;
-//   p.dim=dim;
-//   p.width = WIDTH;
-//   p.height = HEIGHT;
-//   p.mapping = MAPPING;
-//   p.tp = tp;
-//   fillNodeTris(specificNode,&p);
-// 
-//   std::string pngname(filename);
-//   if ( !tp->nodename.empty() )
-//     pngname+="_"+tp->nodename;
-//   pngname+=".png";
-//   stbi_write_png(pngname.c_str(), WIDTH, HEIGHT, 1, lumdata, WIDTH );
-//   free(lumdata);
-// }
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
@@ -731,93 +767,20 @@ double fltGetTime()
 #endif
 }
 
-void getRowCol(const std::string& name, const std::string& ms, int* row, int* col)
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void doMosaicTilesProcess(fltThreadPool& tp, const std::vector<std::string>& files)
 {
-  size_t i=0,j=0;
-  size_t w;
-  char tmp[64]={0};
-  int nc,mc,nmc;
-  int t;
-  *row = *col = -1;
-  for (;i<ms.length();++i,++j)
-  {
-    mc = tolower(ms[i]);
-    nc = tolower(name[j]);
-    if ( nc!=mc && mc!='$') return; // name and ms should match
-    if ( mc=='$' )
-    {
-      if ( i >= ms.length()-1 ) return;
-      mc=tolower(ms[++i]);
-      if ( mc == 'r' || mc == 'c' )
-      {
-        nmc=ms[++i];
-        t=0;
-        while (j<name.length() && tolower(name[j])!=nmc) 
-        {
-          tmp[t++]=name[j];
-          ++j;
-        }
-        tmp[t]=0;
-        int* w = mc=='r' ? row : col;
-        *w = atoi(tmp);
-      }
-    }
-  }
 
 }
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-bool computeMosaicRowCols(const std::string& mosaic)
+void doSingleTilesProcess(fltThreadPool& tp, const std::vector<std::string>& files)
 {
-  mosaicRows=mosaicCols=-1;
-  int r,c;
-  for (auto it:mosaicmap)
-  {
-    getRowCol(it.first, mosaic, &r, &c);
-    if ( r>mosaicRows ) mosaicRows = r;
-    if ( c>mosaicCols ) mosaicCols = c;
-  }
-  ++mosaicRows; ++mosaicCols;
-  return mosaicCols>0 && mosaicRows>0;
-}
-
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-void generateMosaic(const std::string& name, fltThreadPool* tp)
-{
-  // compute size for mosaic image
-  {
-    
-  }
-
-  // for each image tile in mosaicmap
-  //    compute the row/colum out of mosaic wildcard and tile name
-  //    blit the image into the mosaic row/colum
-  //    deallocate tile
-  //    
-  // save the mosaic image into the destination format
-}
-
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-void doProcess(const std::vector<std::string>& files, int format, const std::string& nodename, 
-               int nodetype, int w, int h, int culling, int depth, const std::string& mosaic)
-{
-  fltThreadPool tp;
-  tp.init(std::thread::hardware_concurrency()*2);
-  tp.format = format;
-  tp.nodename = nodename;
-  tp.nodetype = nodetype;
-  tp.res[0]=w;
-  tp.res[1]=h;
-  tp.culling=culling;
-  tp.depth = depth;
-  tp.mosaic = mosaic;
-
   // one task per file
   for ( const std::string& f : files )
-    tp.addNewTask(fltThreadTask(fltThreadTask::TASK_FLT2ELEV, f) );
+    tp.addNewTask(new fltTaskFlt2Elev(f));
 
   // wait until cores finished
   double t0=fltGetTime();
@@ -831,16 +794,12 @@ void doProcess(const std::vector<std::string>& files, int format, const std::str
     ++c;
   } while ( tp.isWorking() );
 
-  // we finished individual tiles, we generate the big mosaic height image if enabled
-  if ( !tp.mosaic.empty() && !mosaicmap.empty() )
-  {
-    generateMosaic("mosaic", &tp);
-  }
   printf( "\n\nTime : %g secs\n", (fltGetTime()-t0)/1000.0);
   printf( "Triangles (ok/culled): %d/%d\n", tp.numtris, tp.numtrisbf);
-  tp.deinit();
 }
 
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 void fltGetFilesFromWildcard(const std::string& wildcard, std::vector<std::string>& outfiles)
 {
 #if defined(_WIN32) || defined(_WIN64)
@@ -869,6 +828,34 @@ void fltGetFilesFromWildcard(const std::string& wildcard, std::vector<std::strin
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
+int printUsage( const char* exec ) 
+{
+  char* program=flt_path_basefile(exec);
+  printf("%s: Creates elevation file out of a FLT.\n\nBy default it converts all geometry in the FLT unless a LOD node name is specified\n\n", program );    
+  printf("Usage: $ %s <options> <flt_files> \nOptions:\n", program );    
+  printf("\t -f N         : Format. 0:PNG 1:DEM 2:RAW. Default=0\n");
+  printf("\t -z N         : Depth bits. 8/16/32\n");
+  printf("\t -o N         : Optional Node Opcode where to get the geometry from. Default=none=Any type\n");
+  printf("\t -n <name>    : Optional Node Name where to get the geometry from. Default=none=All nodes\n");
+  printf("\t -d <w> <h>   : Optional. Force this resolution for the final image, w=width, h=height. 0 to get aspect-ratio\n" );    
+  printf("\t -w <wildcard>: Wildcard for files, i.e. flight*.flt\n" );
+  printf("\t -c <culling> : 0:none 1:cw 2:ccw. Default=2\n");
+  printf("\t -m <mosaic>  : Mosaic big texture. Specify the column $c and row $r to glue all images in one big single one\n" );
+  printf("\nExamples:\n" );
+  printf("\tConvert all geometry of the flt files, force 512x512 image\n" );
+  printf("\t $ %s -d 512 512 -w flight*.flt\n\n", program);
+  printf("\tConvert tile into a grayscale image, only geometry under LOD name \"l1\" is converted:\n" );
+  printf("\t $ %s -f 0 -n l1 -o 73 flight1_1.flt\n\n", program);
+  printf("\tConvert into raw format 32 bit forcing 512 width (height will be computed\n");
+  printf("\t $ %s -f 2 -d 512 0 -z 32 flight1_1.flt\n\n", program);
+  printf("\tCreates a big heightmap image with all of them\n");
+  printf("\t $ %s -w flight?_?.flt -m flight$r_$c.flt\n\n", program);
+  flt_free(program);
+  return -1;
+}
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 int main(int argc, const char** argv)
 {
   int format=FORMAT_PNG;
@@ -878,8 +865,9 @@ int main(int argc, const char** argv)
   int depth=8;
   std::vector<std::string> files;
   std::string wildcard;
-  std::string mosaic;
+  std::string mosaicWc;
 
+  // gathering configuration from parameters
   int w=-1, h=-1;
   for ( int i = 1; i < argc; ++i )
   {
@@ -893,7 +881,7 @@ int main(int argc, const char** argv)
         case 'w': if (i+1<argc) wildcard=argv[++i]; break;
         case 'c': if (i+1<argc) culling=atoi(argv[++i]); break;
         case 'z': if (i+1<argc) depth=atoi(argv[++i]); break;
-        case 'm': if (i+1<argc) mosaic=argv[++i]; break;
+        case 'm': if (i+1<argc) mosaicWc=argv[++i]; break;
         case 'd': 
           if (i+1<argc) w=atoi(argv[++i]); 
           if (i+1<argc) h=atoi(argv[++i]); 
@@ -905,63 +893,48 @@ int main(int argc, const char** argv)
       files.push_back( argv[i] );
   }
 
+  // checking parameters
   if ( format < FORMAT_PNG || format >= FORMAT_MAX )   format=FORMAT_PNG;
+  if ( format == FORMAT_DEM )
+  {
+    fprintf( stderr, "Not implemented DEM format\n" );
+    return;
+  }
   if (culling< CULLING_NONE || culling > CULLING_CCW) culling=CULLING_CCW;
   if ( depth != 8 && depth != 16 && depth != 32 ) depth = 8;
-
   if ( format == FORMAT_PNG && depth != 8 )
   {
     fprintf(stderr, "Forcing 8 bits depth for PNG format\n");
     depth = 8;
   }
 
+  // gathering files if wildcard
   if ( !wildcard.empty() )
     fltGetFilesFromWildcard(wildcard, files);
   
-  if ( !files.empty() )
-  {
-    // generate template mosaic map with names if proceed
-    if ( !mosaic.empty() )
-    {
-      for ( auto s :files ) addMosaicInfo(s,fltNodeFillParam());
-      if ( !computeMosaicRowCols(mosaic) )
-      {
-        fprintf( stderr, "Invalid columns/rows found (%d/%d) with mosaic wildcard: %s\n", mosaicCols, mosaicRows, mosaic.c_str());
-        return -1;
-      }
-    }
-    doProcess(files, format, nodename, nodetype, w, h, culling, depth, mosaic);
-  }
+  // returning if not files
+  if ( files.empty() )
+    return printUsage(argv[0]);
+
+  // creates the threadpool and initializes with configuration
+  fltThreadPool tp;
+  tp.init(std::thread::hardware_concurrency()*2);
+  tp.format = format;
+  tp.nodename = nodename;
+  tp.nodetype = nodetype;
+  tp.forceDim[0]=w;
+  tp.forceDim[1]=h;
+  tp.culling=culling;
+  tp.depth = depth;
+  tp.mosaic.mosaicWc = mosaicWc;
+
+  // Single or Mosaic mode
+  if ( mosaicWc.empty() )
+    doSingleTilesProcess(tp, files);
   else
-  {
-    char* program=flt_path_basefile(argv[0]);
-    printf("%s: Creates elevation file out of a FLT.\n\nBy default it converts all geometry in the FLT unless a LOD node name is specified\n\n", program );    
-    printf("Usage: $ %s <options> <flt_files> \nOptions:\n", program );    
-    printf("\t -f N         : Format. 0:PNG 1:DEM 2:RAW. Default=0\n");
-    printf("\t -z N         : Depth bits. 8/16/32\n");
-    printf("\t -o N         : Optional Node Opcode where to get the geometry from. Default=none=Any type\n");
-    printf("\t -n <name>    : Optional Node Name where to get the geometry from. Default=none=All nodes\n");
-    printf("\t -d <w> <h>   : Optional. Force this resolution for the final image, w=width, h=height. 0 to get aspect-ratio\n" );    
-    printf("\t -w <wildcard>: Wildcard for files, i.e. flight*.flt\n" );
-    printf("\t -c <culling> : 0:none 1:cw 2:ccw. Default=2\n");
-    printf("\t -m <mosaic>  : Mosaic big texture. Specify the column $c and row $r to glue all images in one big single one\n" );
-    printf("\nExamples:\n" );
-    printf("\tConvert all geometry of the flt files, force 512x512 image\n" );
-    printf("\t $ %s -d 512 512 -w flight*.flt\n\n", program);
+    doMosaicTilesProcess(tp, files);    
 
-    printf("\tConvert tile into a grayscale image, only geometry under LOD name \"l1\" is converted:\n" );
-    printf("\t $ %s -f 0 -n l1 -o 73 flight1_1.flt\n\n", program);    
-
-    printf("\tConvert into raw format 32 bit forcing 512 width (height will be computed\n");
-    printf("\t $ %s -f 2 -d 512 0 -z 32 flight1_1.flt\n\n", program);    
-
-    printf("\tCreates a big heightmap image with all of them\n");
-    printf("\t $ %s -w flight?_?.flt -m flight$r_$c.flt\n\n", program);    
-
-
-    
-    flt_free(program);
-  }
-  
+  // finishes thread pool
+  tp.deinit();  
   return 0;
 }
