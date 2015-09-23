@@ -477,7 +477,11 @@ void TaskSingleFile::run(ThreadPool* tp)
   ElevationConfig& config = tp->getConfig();
 
   // loading openflight and cache some info
-  if ( !Helper::loadFlt(filename, config, &of, &tinfo.fltnode, &tinfo.xtent) ) return;
+  if ( !Helper::loadFlt(filename, config, &of, &tinfo.fltnode, &tinfo.xtent) ) 
+  {
+    fprintf( stderr, "Error loading: %s\n", filename.c_str() );
+    return;
+  }
   tinfo.fltfile = filename;
   tinfo.of = of;
 
@@ -485,7 +489,11 @@ void TaskSingleFile::run(ThreadPool* tp)
   Helper::computeTileInfo(config, tinfo.xtent, &tinfo);
 
   // allocate the data
-  if ( !Helper::allocImage(config, tinfo, &outImg) ) return;
+  if ( !Helper::allocImage(config, tinfo, &outImg) )
+  {
+    fprintf( stderr, "Error allocating image: %s\n", filename.c_str() );
+    return;
+  }
 
   // fill data with heights
   Helper::fillImage(config, tinfo, of, outImg);
@@ -498,7 +506,8 @@ void TaskSingleFile::run(ThreadPool* tp)
   std::string finalname(filename);
   if ( !config.nodename.empty() ) finalname+="_"+config.nodename;
   finalname+=Helper::getFormatExtension(config.format);
-  Helper::saveImage(config, outImg, finalname);
+  if ( ! Helper::saveImage(config, outImg, finalname) )
+    fprintf( stderr, "Error saving image: %s\n", finalname.c_str() );
 
   // deallocating image
   Helper::deallocImage(&outImg);
@@ -657,7 +666,8 @@ bool Helper::computeTileInfo(const ElevationConfig& config, const FltExtent& xte
   if (WIDTH==0) WIDTH=(int)(AR*HEIGHT);
   if (HEIGHT==0) HEIGHT=(int)(IAR*WIDTH);
   const double maxz= (config.depth==32) ? 4294967295.0 : (double)( (1<<config.depth)-1 ); // 1<<32 not work fine on some compilers
-  const double MAPPING[3] = { 1.0/dim[0]*WIDTH, 1.0/dim[1]*HEIGHT, (dim[2]>maxz) ? (maxz/dim[2]) : (1.0) };
+  const bool doHeightScale = config.depth==8 || (dim[2]>maxz); // only for 8-bit we scale up. for the rest only scale down.
+  const double MAPPING[3] = { 1.0/dim[0]*WIDTH, 1.0/dim[1]*HEIGHT, doHeightScale ? maxz/dim[2] : 1.0 };
 
   // save tile info
   outTInfo->width = WIDTH;
