@@ -243,6 +243,7 @@ struct ElevationConfig
     nodetype=-1;
     culling=CULLING_CCW;
     depth=8;
+    recurseDir=false;
   }
   bool validate();
   bool parseCLI(int argc, const char** argv, std::vector<std::string>& outFiles);
@@ -250,6 +251,7 @@ struct ElevationConfig
   std::string nodename;   // optional name of the node that we use to get the geometry 
   std::string basepath;   // (mosaic mode) base path where to save the single mosaic heightfield
   std::string wildcard;   // optional wildcard to gather flt files
+  bool recurseDir;        // recurse directories when using wildcards
   bool mosaicMode;        // true to activate single heightmap mosaic
   int forceDim[2];        // width/height of heightmap image or -1 if use flt files extent
   eHFFormat format;       // format for heightfield
@@ -292,7 +294,7 @@ public:
   static const char* getFormatExtension(eHFFormat fmt);
 
     // Gets all files specified by the DOS-style wildcard
-  static void gatherFilesFromWildcard(const std::string& wildcard, std::vector<std::string>& outfiles);
+  static void gatherFilesFromWildcard(const std::string& wildcard, bool recurse, std::vector<std::string>& outfiles);
 
     // Force value in range
   template<typename T> static T clamp(T v, T _m, T _M){ return v<_m?_m:(v>_M?_M:v);}
@@ -786,12 +788,13 @@ double inline Helper::crossProductTriangle(double* v0, double* v1, double* v2)
   return (v1[0]-v0[0])*(v2[1]-v1[1]) - (v1[1]-v0[1])*(v2[0]-v1[0]);
 }
 
-void Helper::gatherFilesFromWildcard(const std::string& wildcard, std::vector<std::string>& outfiles)
+void Helper::gatherFilesFromWildcard(const std::string& wildcard, bool recurse, std::vector<std::string>& outfiles)
 {
 #if defined(_WIN32) || defined(_WIN64)
   char filterTxt[MAX_PATH];  
   sprintf_s( filterTxt, "%s", wildcard.c_str() );
   char* basepath = flt_path_base(filterTxt);
+  std::string bpath = basepath ? basepath : "./";
   // files for this directory
   WIN32_FIND_DATAA ffdata;
   HANDLE hFind = FindFirstFileA( filterTxt, &ffdata );
@@ -801,12 +804,12 @@ void Helper::gatherFilesFromWildcard(const std::string& wildcard, std::vector<st
     {
       if ( ffdata.dwFileAttributes & FILE_ATTRIBUTE_ARCHIVE )
       {
-        outfiles.push_back( std::string(basepath)+ffdata.cFileName );
+        outfiles.push_back( bpath+ffdata.cFileName );
       }
     }while ( FindNextFile(hFind,&ffdata)!=0 );
     FindClose(hFind);
   }
-  flt_free(basepath);
+  flt_safefree(basepath);
 #else
 #error "Implement this function for other platforms"
 #endif
@@ -1089,7 +1092,7 @@ void doSingleTilesProcess(ThreadPool& tp, const std::vector<std::string>& files)
 
   // wait until cores finished
   double t0=Helper::getCurrentTime();
-  fprintf( stderr, "Processing...\n" );
+  fprintf( stderr, "Processing %d tiles...\n", files.size() );
   tp.waitForTasks();
   doPrintStats(t0);
 }
@@ -1103,17 +1106,18 @@ int printUsage( const char* exec )
   printf("\t -z N         : Depth bits. 8/16/32\n");
   printf("\t -o N         : Optional Node Opcode where to get the geometry from. Default=none=Any type\n");
   printf("\t -n <name>    : Optional Node Name where to get the geometry from. Default=none=All nodes\n");
-  printf("\t -d <w> <h>   : Optional. Force this resolution for the final image, w=width, h=height. 0 to get aspect-ratio\n" );    
+  printf("\t -d <w> <h>   : Optional. Force resolution for the final image, w=width, h=height. 0 for aspect-ratio\n" );    
   printf("\t -w <wildcard>: Wildcard for files, i.e. flight*.flt\n" );
+  printf("\t -r           : Recurse directories for wildcard. Default=false\n" );
   printf("\t -c <culling> : 0:none 1:cw 2:ccw. Default=2\n");
   printf("\t -m           : Enable Mosaic mode. All in one image. Default=disabled\n" );
   printf("\t -g           : Enable GPU acceleration. Default=disabled\n" ); // will be removed and will use GPU acceleration where available by default
   printf("\nExamples:\n" );
-  printf("\tConvert all geometry of the flt files, force 512x512 image\n" );
+  printf("\tConvert all geometry of the flt files to pngs, force 512x512 images\n" );
   printf("\t $ %s -d 512 512 -w flight*.flt\n\n", program);
   printf("\tConvert tile into a grayscale image, only geometry under LOD name \"l1\" is converted:\n" );
   printf("\t $ %s -f 0 -n l1 -o 73 flight1_1.flt\n\n", program);
-  printf("\tConvert into raw format 32 bit forcing 512 width (height will be computed\n");
+  printf("\tConvert into raw format 32 bit forcing 512 width (height will be computed)\n");
   printf("\t $ %s -f 2 -d 512 0 -z 32 flight1_1.flt\n\n", program);
   printf("\tCreates a big heightmap image with all of them\n");
   printf("\t $ %s -m -w flight?_?.flt\n\n", program);
@@ -1168,6 +1172,7 @@ bool ElevationConfig::parseCLI(int argc, const char** argv, std::vector<std::str
       case 'c': if (i+1<argc) culling= static_cast<eCulling>(atoi(argv[++i])); break;
       case 'z': if (i+1<argc) depth=atoi(argv[++i]); break;
       case 'm': mosaicMode=true; break;
+      case 'r': recurseDir=true; break;
       case 'd': 
         if (i+1<argc) forceDim[0]=atoi(argv[++i]); 
         if (i+1<argc) forceDim[1]=atoi(argv[++i]); 
@@ -1184,7 +1189,7 @@ bool ElevationConfig::parseCLI(int argc, const char** argv, std::vector<std::str
   
   // gathering files if wildcard
   if ( !wildcard.empty() )
-    Helper::gatherFilesFromWildcard(wildcard, outFiles);
+    Helper::gatherFilesFromWildcard(wildcard, recurseDir, outFiles);
 
   // getting base path for mosaic heightfield 
   if ( mosaicMode && !outFiles.empty())
