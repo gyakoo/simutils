@@ -2393,11 +2393,12 @@ char* flt_path_base(const char* filename)
     {
       // weren't not last
       if ( ptr+1 != ret+len ) *(ptr+1)='\0';
-      break;
+      return ret;
     }
     --ptr;
   }
-  return ret;
+  flt_safefree(ret);
+  return FLT_NULL;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
