@@ -1584,6 +1584,11 @@ extern "C" {
     UINT height;
   }vis;
 
+  typedef struct vis_shader_bytecode
+  {
+    ID3DBlob* blob;
+  }vis_shader_bytecode;
+
 #ifdef __cplusplus
 };
 #endif
@@ -1752,6 +1757,36 @@ void vis_release_resource(vis* vi, vis_handle* resource)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+int32_t vis_shader_compile(vis* vi, uint32_t loadSrc, vis_shader_compile_desc* shader_desc, vis_shader_bytecode* outByteCode)
+{
+#ifdef VIS_NO_SHADER_COMPILE_SUPPORT
+  return VIS_OK;
+#else
+  HRESULT hr;
+
+  // d3d12 compile flags out of shader_desc->flags
+  UINT compile_flags = 0;
+  if (shader_desc->compile_flags & VIS_COMPILEFLAG_DEBUG)
+    compile_flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+  if (shader_desc->compile_flags & VIS_COMPILEFLAG_NO_VALIDATION)
+    compile_flags |= D3DCOMPILE_SKIP_VALIDATION;
+
+  switch (loadSrc)
+  {
+  case VIS_LOAD_SOURCE_FILE:
+    hr = D3DCompileFromFile((const char*)shader_desc->data_src,
+      nullptr, nullptr, shader_desc->entry_point, shader_desc->target, 
+      compile_flags, 0, &outByteCode->blob, nullptr);
+    if (FAILED(hr)) return VIS_FAIL;
+  break;
+  case VIS_LOAD_SOURCE_MEMORY:
+  break;
+  }
+#endif
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
 void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, 
   _Outptr_result_maybenull_ IDXGIAdapter1** ppAdapter, 
   _Out_ D3D_FEATURE_LEVEL* featLevel)
@@ -1836,7 +1871,7 @@ vis_handle vdx12_create_vertex_buffer(vis* vi, void* data, uint32_t size)
   vh->type = VIS_TYPE_VERTEXBUFFER;
   vh->subtype = 0;
   vdx12_vertex_buffer* vdx12_vb = (vdx12_vertex_buffer*)vis_malloc(sizeof(vdx12_vertex_buffer));
-  vis_mem_check(vh->obj);
+  vis_mem_check(vdx12_vb);
   vh->obj = vdx12_vb;
   vdx12_vb->vb = vb;
   vdx12_vb->vb_staging = vb_staging;

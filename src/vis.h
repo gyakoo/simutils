@@ -331,6 +331,8 @@ SOFTWARE.
 #define VIS_CLS_DRAW 7
 #define VIS_CLS_DRAW_INDEXED 8
 
+#define VIS_COMPILEFLAG_DEBUG (1<<0)
+#define VIS_COMPILEFLAG_NO_VALIDATION (1<<1)
 
 #ifdef __cplusplus
 extern "C" {
@@ -342,6 +344,8 @@ extern "C" {
   typedef viscalar vis4x4[16];
 
   struct vis;
+  struct vis_shader_bytecode;
+
   ////////////////////////////////////////////////
   typedef struct vis_rect
   {
@@ -501,11 +505,14 @@ extern "C" {
   }vis_pipeline_state;
 
   ////////////////////////////////////////////////
-  typedef struct vis_shader_bytecode
+  typedef struct vis_shader_compile_desc
   {
-    uint8_t* data;
-    uint32_t size;
-  }vis_sbc;
+    void* data_src;
+    uint32_t data_len;
+    const char* entry_point;
+    const char* target;
+    uint32_t compile_flags;
+  }vis_shader_compile_desc;
 
   ////////////////////////////////////////////////
   typedef struct vis_cmd_clear
@@ -534,7 +541,7 @@ extern "C" {
   void vis_release_resource(vis* vi, vis_handle* resource);
 
   ////////////////////////////////////////////////
-  uint32_t vis_shader_compile(vis* vi, uint32_t loadSrc, void* srcData, uint32_t srcSize, vis_shader_bytecode* outByteCode );
+  int32_t vis_shader_compile(vis* vi, uint32_t loadSrc, vis_shader_compile_desc* shader_desc, vis_shader_bytecode* outByteCode );
   void vis_pipeline_state_set_default(vis* vi, vis_pipeline_state* pstate);
 
   ////////////////////////////////////////////////

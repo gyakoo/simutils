@@ -70,8 +70,10 @@ int app_load_assets(vis* vi, app_assets* assets)
     // compile and create vs/ps
     vis_shader_bytecode vsbytecode = { 0 };
     vis_shader_bytecode psbytecode = { 0 };
-    vis_shader_compile(vi, VIS_LOAD_SOURCE_MEMORY, (void*)vsstr, strlen(vsstr), &vsbytecode);
-    vis_shader_compile(vi, VIS_LOAD_SOURCE_MEMORY, (void*)psstr, strlen(psstr), &psbytecode);
+    vis_shader_compile_desc vsdesc = { (void*)vsstr, strlen(vsstr), "vs_main", "vs_5_0", VIS_COMPILEFLAG_DEBUG };
+    vis_shader_compile_desc psdesc = { (void*)psstr, strlen(psstr), "ps_main", "ps_5_0", VIS_COMPILEFLAG_DEBUG };
+    vis_shader_compile(vi, VIS_LOAD_SOURCE_MEMORY, &vsdesc, &vsbytecode);
+    vis_shader_compile(vi, VIS_LOAD_SOURCE_MEMORY, &psdesc, &psbytecode);
     assets->vs = vis_create_resource(vi, VIS_TYPE_SHADER, &vsbytecode, VIS_STAGE_VS);
     assets->ps = vis_create_resource(vi, VIS_TYPE_SHADER, &psbytecode, VIS_STAGE_PS);
 
