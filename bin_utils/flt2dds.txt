@@ -1,0 +1,55 @@
+
+# flt2dds
+A tool to convert all imagery data from Openflight graph into DDS in Multithread mode.
+Note: It also converts any supported input format image to DDS with no need of Openflight data.
+Version: 0.1a
+
+
+# features
+* Supported image formats: 
+ * sgi, rgb, rgba.
+ * jpg, png, tga, bmp, psd, gif, hdr, pic, pnm.
+* Optional best-fit block compression format for textures with alpha. (-a 0 option)
+* Converts recursively with the -r option.
+* Multithreaded
+
+# some tests
+
+* 25Gb rgb (8,676 files):
+ * -> 4Gb dds files (-q 0 -a 2)
+ * -> 7 minutes (16 threads 8 cores) 
+
+# help screen
+```
+flt2dds: Converts imagery data from Openflight to DirectX DDS files
+
+Usage: $ flt2dds.exe <options> <file0> [<file1>...]
+Options:
+         -?   : This help screen
+         -v   : Enable verbose mode. default=disabled
+         -f   : Force DDS write even though the target DDS file already exists. default=disabled
+         -m   : Generate mip maps. default=no
+         -q N : DDS out quality (0:low 1:medium 2:high). default=0
+         -a N : Alpha format (0:Auto 1:BC1 2:BC2 3:BC3). Auto uses variance of image, slower. default=2:BC2
+         -t N : Force N threads. Values 0..512 (0:Max HW threads). default=0:Max HW threads
+         -r w : Converts recursively all files matching wildcard 'w' using the input file paths.
+
+         <file0>...: Files can be either any image file (rgb, png...) or FLT files where to look at
+         Supported image formats: rgb, rgba, sgi, jpg, jpeg, png, tga, bmp, psd, gif, hdr, pic, pnm
+
+Examples:
+        Converts all images pointed recursively by master.flt with quality medium, forcing overwrite dds
+          $ flt2dds.exe -q 1 -f -v master.flt
+
+        Converts these three images
+          $ flt2dds.exe image1.png image2.jpg image3.rgba
+
+        Converts all rgb files recursively from directory c:\flight\ (note to add \ at end)
+          $ flt2dds.exe -r *.rgb c:\flight\
+
+        Converts images from these flt files
+          $ flt2dds.exe models/tank.flt models/plane.flt
+```
+
+# todo
+* Add CUDA version (nvtt) for performance improvement

@@ -18,4 +18,3 @@ if %ERRORLEVEL% NEQ 0 (
 xcopy ..\..\extern\vld\bin\Win32\*.* buildvs2012\bin\x32\debug\ /Y
 xcopy ..\..\extern\vld\bin\Win64\*.* buildvs2012\bin\x64\debug\ /Y
 echo.
-pause

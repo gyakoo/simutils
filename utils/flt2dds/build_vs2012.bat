@@ -21,4 +21,3 @@ xcopy ..\..\extern\nvtt\vs2012\Release.Win32\nvtt.dll build\bin\x32\release\ /Y
 xcopy ..\..\extern\nvtt\vs2012\Release.x64\nvtt.dll build\bin\x64\release\ /Y
 
 echo.
-pause

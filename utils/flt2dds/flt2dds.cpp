@@ -42,7 +42,7 @@ SOFTWARE.
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 #define SGIRGB_IMPLEMENTATION
-#include <flt_sgirgb.h>
+#include <sgi.h>
 
 #define F2D_DDS_Q_LOW       (1<<0)
 #define F2D_DDS_Q_MED       (1<<1)

@@ -248,6 +248,10 @@ extern "C" {
 
   int flt_get_op_from_node_type(int nodetype);
 
+  flt_node* flt_node_find_by_name(flt_node* node_parent, const char* node_name );
+
+  void flt_count_indices(flt_node* node_parent, fltu32* inds, int recursive);
+
 #ifdef FLT_WRITER
   int flt_write_to_filename(struct flt* of);
 #endif
@@ -2061,6 +2065,58 @@ void flt_swap_desc(void* data, flt_end_desc* desc)
     desc++;
   }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+flt_node* flt_node_find_by_name(flt_node* node_parent, const char* node_name )
+{
+  flt_node *c, *found;
+  if ( !node_parent || !node_name ) return FLT_NULL;
+  if ( node_parent->name && strcmp(node_parent->name, node_name) == 0 )
+    return node_parent;
+
+  c = node_parent->child_head;
+  found = FLT_NULL;
+  while ( c )
+  {
+    found = flt_node_find_by_name(c, node_name);
+    if ( found )
+      break;
+    c = c->next;
+  }
+  return found;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+void flt_count_indices(flt_node* node_parent, fltu32* inds, int recursive)
+{
+#ifdef FLT_UNIQUE_FACES
+  fltu32 b, batchStart, batchEnd;
+  flt_node* c;
+
+  if ( !node_parent ) return;
+  for ( b = 0; b < node_parent->ndx_pairs_count; ++b )
+  {
+    FLTGET32(node_parent->ndx_pairs[b], batchStart, batchEnd);
+    *inds += batchEnd-batchStart+1;
+  }
+
+  if ( recursive )
+  {
+    c = node_parent->child_head;
+    while ( c )
+    {
+      flt_count_indices(c, inds, recursive);
+      c = c->next;
+    }
+  }
+#else
+  FLT_BREAK; // NOT IMPLEMENTED
+  *inds = 0;
+#endif
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////

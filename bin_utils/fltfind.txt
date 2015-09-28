@@ -1,0 +1,26 @@
+# fltfind
+Looks in parallel for flt files having the passed opcode[s].
+
+# help screen
+```
+
+fltfind: Find Openflight files with specific attributes
+
+Usage: $ fltfind <options>
+Options:
+         -r          : Recursive search
+         -o OR|AND   : Boolean operation for opcodes specified with -p. OR will
+look for any of those in files. AND for all of them.
+         -p 0,1,...  : Comma separated values of opcodes to look for it. Only if
+ the file contains all of them, will show
+         -d dir      : Starting directory where to look at
+
+Examples:
+        Find all FLT files with LOD OR MESH records.
+          $ fltfind -r -d D:\flightdata\ -p 73,84 -o OR
+        Find all FLT files having Color AND Vertex Palete Records.
+          $ fltfind -r -d D:\flightdata\ -p 67;32 -o AND
+```
+
+# todo
+More complex search rules

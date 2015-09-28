@@ -1,0 +1,22 @@
+# fltheader
+Prints header information of FLT files
+
+# help screen
+```
+fltheader: Prints the header of a FLT file
+
+Usage: $ fltheader <options> <flt_files>
+Options:
+         -r   : Recursive. Resolve all external references recursively and print the different information
+
+Examples:
+        Header of the master:
+          $ fltheader master.flt
+
+        Header of the master and different info from children:
+          $ fltheader -r master.flt
+
+```
+
+# todo
+More stats information not only from header, but summarize info.

@@ -12,7 +12,7 @@ solution "flt2dds"
     project(tostring(v))
       kind "ConsoleApp"
       language "C++"
-      files { "**.h", "**.cpp", "**.c", "**.cc", "../../extern/nvtt/include/*.*", "../../extern/stb_image.h", "../../src/flt_sgirgb.h" }
+      files { "**.h", "**.cpp", "**.c", "**.cc", "../../extern/nvtt/include/*.*", "../../extern/stb_image.h", "../../src/sgi.h" }
       includedirs { "./", "../../extern/", "../../extern/nvtt/include/", "../../src/" }
       links {"nvtt.lib"}      
       --[[

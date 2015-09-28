@@ -1,0 +1,41 @@
+# flt2xml
+A tool to dump all the information from a FLT file to a XML file.
+
+It does not generate face records with vertex lists, but instead will find the unique faces and will
+generate batches of indices of similar faces for the groups/lod/object nodes, that way the resulting
+file is smaller and the memory footprint too.
+
+If will use multithread to read external references (-r option) and texture header info (-t option).
+
+You can also specify the information you want per vertex.
+
+
+# help screen
+```
+flt2xml: Dumps (Unique Faces version) Openflight metadata in xml format
+
+Usage: $ flt2xml.exe <options> <flt_file>
+Options:
+         -t   : Inspect texture headers.
+         -a   : Dump all information (vertices/faces)
+         -r   : Recursive. Resolve all external references recursively
+         -v pntcs: Vertex mask. p=position n=normal t=uv c=color s=single precision
+
+Supported image formats: rgb, rgba, sgi, jpg, jpeg, png, tga, bmp, dds
+
+Examples:
+        Dump all information recursively into a xml file:
+          $ flt2xml.exe master.flt -t -a -r > alldb.xml
+
+        Only writes structure info into xml:
+          $ flt2xml.exe model.flt > model.xml
+
+        Dump only single precision Position and Normals of model.flt:
+          $ flt2xml.exe -a -v psn tank.flt > tank.xml
+
+
+```
+
+# todo
+- Not all nodes are parsed. Meshes nodes are on the work.
+- 
