@@ -30,16 +30,6 @@ Set of applications and small tools making use of these libraries.
 # Why single file headers?
 
 Citing <a href="https://github.com/nothings/stb/blob/master/README.md">nothings/stb</a>:
-Windows doesn't have standard directories where libraries
-live. That makes deploying libraries in Windows a lot more
-painful than open source developers on Unix-derivates generally
-realize. (It also makes library dependencies a lot worse in Windows.)
-
-There's also a common problem in Windows where a library was built
-against a different version of the runtime library, which causes
-link conflicts and confusion. Shipping the libs as headers means
-you normally just compile them straight into your project without
-making libraries, thus sidestepping that problem.
 
 Making them a single file makes it very easy to just
 drop them into a project that needs them. (Of course you can
