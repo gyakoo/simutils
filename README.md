@@ -1,26 +1,30 @@
 # Sim Utils
+Work In Pogress 
 List of small utility libraries written in C/C++ for simulation related work.
 
 # Libraries
 
 library    | lastest version | category | description
 ---------- | --------------- | ---------| ------------
-**com_ip.h** | 0.1a | communications | Foundation socket library based in IP protocol (UDP/TCP)
-**com_cigi33.h** | 0.1a | communications | Common Image Generator Interface 3.3 implementation
+**pip.h** | 0.1a | communications | Foundation socket library based in IP protocol (UDP/TCP)
+**cigi.h** | 0.1a | communications | Common Image Generator Interface implementation
 **proj.h** | 0.1a | projections | Functions to convert between different projections
 **flt.h** | 0.1a | openflight | Load geometry and other metadata from Openflight files
 **sgi.h** | 0.1a | openflight | Decode SGI RGB/RGBA format from file. RLE and Verbatim modes supported
-**rend.h** | 0.1a | rendering | Rendering functions, supporting DX11 and OpenGL
-**fltr.h** | 0.1a | openfligh | Specific function for Openflight Rendering
+**vis.h** | 0.1a | rendering | Rendering functions, specific implementations vis_dx11, vis_dx12, vis_gl
 
 # Utils
 Set of applications and small tools making use of these libraries.
-### flt2dds
-A single-cpp file C++11 tool to convert all imagery data from Openflight graph into DDS. <br/>
-See <a href="https://github.com/gyakoo/simutils/tree/master/utils/flt2dds">flt2dds readme</a> for more information.
-
-### fltviewer
-Small OpenGL FLT viewer to showcase the use of flt.h.
+* flt2dds : Converts images into Direct Draw Surface (DDS) format.
+* flt2elev: Generate elevation maps out of flt files.
+* flt2xml : Dumps openflight information into xml.
+* fltextent: Dumps extent information of flt files.
+* fltfind : Searchs for openflight files with specific opcodes
+* fltheader: Dumps header information of flt files.
+* fltmlod : Makes files with LOD structure out of xml specification and external references.
+* fltview : Visualizes an openflight file.
+* cigitest: Test of cigi lib.
+* dx12test: Test of vis_dx12.
 
 # Why single file headers?
 
