@@ -1,0 +1,40 @@
+# flt2elev
+Creates a height map out of a FLT file.
+
+# help screen
+```
+flt2elev: Creates elevation file out of a FLT.
+
+By default it converts all geometry in the FLT unless a LOD node name is specified
+
+Usage: $ flt2elev <options> <flt_files>
+Options:
+         -f N         : Format. 0:PNG 1:DEM 2:RAW. Default=0
+         -z N         : Depth bits. 8/16/32
+         -o N         : Optional Node Opcode where to get the geometry from. Default=none=Any type
+         -n <name>    : Optional Node Name where to get the geometry from. Default=none=All nodes
+         -d <w> <h>   : Optional. Force resolution for the final image, w=width, h=height. 0 for asp
+ect-ratio
+         -w <wildcard>: Wildcard for files, i.e. flight*.flt
+         -r           : Recurse directories for wildcard. Default=false
+         -c <culling> : 0:none 1:cw 2:ccw. Default=2
+         -m           : Enable Mosaic mode. All in one image. Default=disabled
+         -g           : Enable GPU acceleration. Default=disabled
+
+Examples:
+        Convert all geometry of the flt files to pngs, force 512x512 images
+         $ flt2elev -d 512 512 -w ./flight*.flt
+
+        Convert tile into a grayscale image, only geometry under LOD name "l1" is converted:
+         $ flt2elev -f 0 -n l1 -o 73 flight1_1.flt
+
+        Convert into raw format 32 bit forcing 512 width (height will be computed)
+         $ flt2elev -f 2 -d 512 0 -z 32 flight1_1.flt
+
+        Creates a big heightmap image with all of them
+         $ flt2elev -m -w ./flight?_?.flt
+
+```
+
+# Note
+When using wildcards, add the current directory prefix if you're under the same dir as flt files ./

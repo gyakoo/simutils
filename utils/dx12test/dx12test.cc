@@ -70,20 +70,24 @@ int app_load_assets(vis* vi, app_assets* assets)
     // compile and create vs/ps
     vis_shader_bytecode vsbytecode = { 0 };
     vis_shader_bytecode psbytecode = { 0 };
-    vis_shader_compile_desc vsdesc = { (void*)vsstr, strlen(vsstr), "vs_main", "vs_5_0", VIS_COMPILEFLAG_DEBUG };
-    vis_shader_compile_desc psdesc = { (void*)psstr, strlen(psstr), "ps_main", "ps_5_0", VIS_COMPILEFLAG_DEBUG };
+    vis_shader_compile_desc vsdesc = { (void*)vsstr, strlen(vsstr), VIS_STAGE_VS, "vs_main", "vs_5_0", VIS_COMPILEFLAG_DEBUG };
+    vis_shader_compile_desc psdesc = { (void*)psstr, strlen(psstr), VIS_STAGE_PS, "ps_main", "ps_5_0", VIS_COMPILEFLAG_DEBUG };
     vis_shader_compile(vi, VIS_LOAD_SOURCE_MEMORY, &vsdesc, &vsbytecode);
     vis_shader_compile(vi, VIS_LOAD_SOURCE_MEMORY, &psdesc, &psbytecode);
     assets->vs = vis_create_resource(vi, VIS_TYPE_SHADER, &vsbytecode, VIS_STAGE_VS);
     assets->ps = vis_create_resource(vi, VIS_TYPE_SHADER, &psbytecode, VIS_STAGE_PS);
+    vis_shader_release_bytecode(vi, &vsbytecode);
+    vis_shader_release_bytecode(vi, &vsbytecode);
 
     // create RT with the back buffers
-    const uint32_t bbcount = vis_get_back_buffer_count(vi);
+    const uint32_t bbcount = vis_backbuffer_count(vi);
     assets->render_targets = (vis_handle*)vis_malloc(sizeof(vis_handle)*bbcount);
     for (uint32_t i = 0; i < bbcount; ++i)
     {
-      assets->render_targets[i] = vis_create_resource(vi, VIS_TYPE_RENDER_TARGET, 
-        vis_get_back_buffer(vi, i), VIS_NONE);
+      vis_handle bbuffer = vis_backbuffer_acquire(vi, i);
+      assets->render_targets[i] = vis_create_resource(vi, 
+        VIS_TYPE_RENDER_TARGET, bbuffer, VIS_NONE);
+      vis_release_resource(vi, &bbuffer);
     }
   }
 
@@ -141,7 +145,7 @@ void app_unload_assets(vis* vi, app_assets* assets)
   vis_release_resource(vi, &assets->pipeline);
   vis_release_resource(vi, &assets->cmd_list);
   
-  const uint32_t bbcount = vis_get_back_buffer_count(vi);
+  const uint32_t bbcount = vis_backbuffer_count(vi);
   for (uint32_t i = 0; i < bbcount; ++i)
     vis_release_resource(vi, &assets->render_targets[i]);
   vis_safefree(assets->render_targets);

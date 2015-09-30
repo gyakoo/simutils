@@ -3,18 +3,19 @@ Computes the extension of a FLT file in X,Y,Z coordinates.
 
 # help screen
 ```
-fltextent.exe: Compute extents of the bounding box containing all geometry in a FLT file
+fltextent: Compute extents of the bounding box containing all geometry in a FLT file
 
-Usage: $ fltextent.exe <options> <flt_files>
+Usage: $ fltextent <options> <flt_files>
 Options:
          -r   : Recursive. Resolve all external references recursively
+         -c   : Cache file format. One line per entry with min and max only
 
 Examples:
-        Extent of all the FLT files and their references:
-          $ fltextent.exe -r master.flt
+        Extent of all the FLT files and their references in plain format:
+          $ fltextent -r -c master.flt > out.txt
 
         Extent of a model FLT file:
-          $ fltextent.exe model.flt
+          $ fltextent model.flt
 ```
 
 # todo

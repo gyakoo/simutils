@@ -107,6 +107,7 @@ SOFTWARE.
 #define VIS_TYPE_FENCE 8
 #define VIS_TYPE_STAGING_RES 9
 #define VIS_TYPE_RENDER_TARGET 10
+#define VIS_TYPE_RENDER_TARGET_ACQUIRED 11
 
 #define VIS_FORMAT_UNKNOWN 0
 #define VIS_FORMAT_R32G32B32A32_TYPELESS 1
@@ -269,6 +270,7 @@ SOFTWARE.
 #define VIS_LOGIC_OP_OR_REVERSE       14
 #define VIS_LOGIC_OP_OR_INVERTED      15
 
+#define VIS_STAGE_NONE (0)
 #define VIS_STAGE_IA (1<<0) // Input Assembler
 #define VIS_STAGE_VS (1<<1) // Vertex Shader
 #define VIS_STAGE_HS (1<<2) // Hull Shader
@@ -509,6 +511,7 @@ extern "C" {
   {
     void* data_src;
     uint32_t data_len;
+    uint32_t stage_shader;
     const char* entry_point;
     const char* target;
     uint32_t compile_flags;
@@ -542,6 +545,7 @@ extern "C" {
 
   ////////////////////////////////////////////////
   int32_t vis_shader_compile(vis* vi, uint32_t loadSrc, vis_shader_compile_desc* shader_desc, vis_shader_bytecode* outByteCode );
+  int32_t vis_shader_release_bytecode(vis* vi, vis_shader_bytecode* bcode);
   void vis_pipeline_state_set_default(vis* vi, vis_pipeline_state* pstate);
 
   ////////////////////////////////////////////////
@@ -562,8 +566,8 @@ extern "C" {
   void vis_rect_make(vis_rect* r, float x, float y, float w, float h);
 
   ////////////////////////////////////////////////
-  uint32_t vis_get_back_buffer_count(vis* vi);
-  void* vis_get_back_buffer(vis* vi, uint32_t index);
+  uint32_t vis_backbuffer_count(vis* vi);
+  vis_handle vis_backbuffer_acquire(vis* vi, uint32_t index);  
 #ifdef __cplusplus
 };
 #endif

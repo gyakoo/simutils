@@ -1565,11 +1565,29 @@ extern "C" {
     void* obj;
   }vis_h;
 
+  typedef struct vis_shader_bytecode
+  {
+    uint32_t stage;
+    ID3DBlob* blob;
+  }vis_shader_bytecode;
+
   typedef struct vdx12_vertex_buffer
   {
     ID3D12Resource* vb;
     ID3D12Resource* vb_staging;
   }vdx12_vertex_buffer;
+
+  typedef struct vdx12_shader
+  {
+    vis_shader_bytecode bcode;
+  }vdx12_shader;
+
+  typedef struct vdx12_render_target
+  {
+    ID3D12Resource* rt;
+    ID3D12DescriptorHeap* rtv_heap;
+    UINT rtv_size;
+  }vdx12_render_target;
 
   typedef struct vis
   {
@@ -1584,11 +1602,6 @@ extern "C" {
     UINT height;
   }vis;
 
-  typedef struct vis_shader_bytecode
-  {
-    ID3DBlob* blob;
-  }vis_shader_bytecode;
-
 #ifdef __cplusplus
 };
 #endif
@@ -1601,7 +1614,11 @@ extern "C" {
 #define vdx12_throwfailed(hr) { if (FAILED(hr)) throw; }
 void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, _Outptr_result_maybenull_ IDXGIAdapter1** ppAdapter, _Out_ D3D_FEATURE_LEVEL* featLevel);
 vis_handle vdx12_create_vertex_buffer(vis* vi, void* data, uint32_t size);
-void vdx12_release_vertex_buffer(vis* vi, vis_handle* resource);
+vis_handle vdx12_create_shader(vis* vi, vis_shader_bytecode* bcode, uint32_t flags);
+vis_handle vdx12_create_render_target(vis* vi, void* data, uint32_t flags);
+int32_t vdx12_release_vertex_buffer(vis* vi, vis_handle* resource);
+int32_t vdx12_release_shader(vis* vi, vis_handle* resource);
+int32_t vdx12_release_render_target(vis* vi, vis_handle* resource);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1738,6 +1755,8 @@ vis_handle vis_create_resource(vis* vi, uint16_t type, void* resData, uint32_t f
   switch (type)
   {
     case VIS_TYPE_VERTEXBUFFER: res = vdx12_create_vertex_buffer(vi, resData, flags); break;
+    case VIS_TYPE_SHADER: res = vdx12_create_shader(vi, (vis_shader_bytecode*)resData, flags);
+    case VIS_TYPE_RENDER_TARGET: res = vdx12_create_render_target(vi, resData, flags); break;
   }
   return res;
 }
@@ -1746,13 +1765,23 @@ vis_handle vis_create_resource(vis* vi, uint16_t type, void* resData, uint32_t f
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void vis_release_resource(vis* vi, vis_handle* resource)
 {
+  int freeObj = VIS_FALSE;
   if (!resource || !*resource)
     return;
 
+  
   switch ((*resource)->type)
   {
-  case VIS_TYPE_VERTEXBUFFER: vdx12_release_vertex_buffer(vi, resource); break;
+  case VIS_TYPE_VERTEXBUFFER: freeObj = vdx12_release_vertex_buffer(vi, resource); break;
+  case VIS_TYPE_SHADER: freeObj = vdx12_release_shader(vi, resource); break;
+  case VIS_TYPE_RENDER_TARGET: freeObj = vdx12_release_render_target(vi, resource); break;
+  case VIS_TYPE_RENDER_TARGET_ACQUIRED: freeObj = vdx12_release_render_target(vi, resource); break;
   }
+
+  // object and resource itself must to be freed
+  if (freeObj)
+    vis_safefree((*resource)->obj);
+  vis_safefree(*resource);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1763,6 +1792,10 @@ int32_t vis_shader_compile(vis* vi, uint32_t loadSrc, vis_shader_compile_desc* s
   return VIS_OK;
 #else
   HRESULT hr;
+  LPWSTR widestring;
+  int dst_size;
+  char* data_src_char;
+  int32_t retval=VIS_FAIL;
 
   // d3d12 compile flags out of shader_desc->flags
   UINT compile_flags = 0;
@@ -1774,18 +1807,69 @@ int32_t vis_shader_compile(vis* vi, uint32_t loadSrc, vis_shader_compile_desc* s
   switch (loadSrc)
   {
   case VIS_LOAD_SOURCE_FILE:
-    hr = D3DCompileFromFile((const char*)shader_desc->data_src,
-      nullptr, nullptr, shader_desc->entry_point, shader_desc->target, 
-      compile_flags, 0, &outByteCode->blob, nullptr);
-    if (FAILED(hr)) return VIS_FAIL;
+    data_src_char = (char*)shader_desc->data_src;
+    dst_size = MultiByteToWideChar(CP_UTF8, 0, data_src_char, shader_desc->data_len, nullptr, 0);
+    if (dst_size > 0)
+    {
+      widestring = (LPWSTR)vis_malloc(dst_size);
+      vis_mem_check(widestring);
+      MultiByteToWideChar(CP_UTF8, 0, data_src_char, shader_desc->data_len, widestring, dst_size);
+      hr = D3DCompileFromFile(widestring, nullptr, nullptr, shader_desc->entry_point, shader_desc->target,
+        compile_flags, 0, &outByteCode->blob, nullptr);
+      vis_free(widestring);
+      if (SUCCEEDED(hr)) retval = VIS_OK;
+    }
   break;
   case VIS_LOAD_SOURCE_MEMORY:
+    hr = D3DCompile(shader_desc->data_src, shader_desc->data_len, nullptr,
+      nullptr, nullptr, shader_desc->entry_point, shader_desc->target, compile_flags, 0, 
+      &outByteCode->blob, nullptr);
+    if (SUCCEEDED(hr)) retval = VIS_OK;
   break;
   }
+
+  // caching also the stage
+  outByteCode->stage = shader_desc->stage_shader;
+
+  return retval;
 #endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+int32_t vis_shader_release_bytecode(vis* vi, vis_shader_bytecode* bcode)
+{
+#ifndef VIS_NO_SHADER_COMPILE_SUPPORT
+  vis_saferelease(bcode->blob);
+  bcode->stage = VIS_STAGE_NONE;
+#endif
+  return VIS_OK;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+uint32_t vis_backbuffer_count(vis* vi)
+{
+  return VDX12_FRAMECOUNT;
+}
+
+vis_handle vis_backbuffer_acquire(vis* vi, uint32_t index)
+{
+  HRESULT hr;
+  ID3D12Resource* back_buffer = nullptr;
+  hr = vi->swapchain->GetBuffer((UINT)index, IID_PPV_ARGS(&back_buffer));
+  if (FAILED(hr)) return nullptr;
+
+  vis_handle vh = (vis_handle)vis_malloc(sizeof(vis_h));
+  vis_mem_check(vh);
+  vh->type = VIS_TYPE_RENDER_TARGET_ACQUIRED;
+  vh->subtype = 0;  
+  vh->obj = back_buffer;
+  return vh;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                    VDX12_ SPECIFIC FUNCTIONS
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, 
   _Outptr_result_maybenull_ IDXGIAdapter1** ppAdapter, 
@@ -1832,8 +1916,6 @@ void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory,
 
 #endif
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
 vis_handle vdx12_create_vertex_buffer(vis* vi, void* data, uint32_t size)
 {
   HRESULT hr;
@@ -1878,17 +1960,99 @@ vis_handle vdx12_create_vertex_buffer(vis* vi, void* data, uint32_t size)
   return vh;
 }
 
-void vdx12_release_vertex_buffer(vis* vi, vis_handle* resource)
+vis_handle vdx12_create_shader(vis* vi, vis_shader_bytecode* bcode, uint32_t flags)
+{
+  // for dx12, our shader would be a reference to the bytecode directly, and a field
+  // just indicating the stage, nothing else so far.
+
+  // create handle and obj
+  vis_handle vh = (vis_handle)vis_malloc(sizeof(vis_h));
+  vis_mem_check(vh);
+  vh->type = VIS_TYPE_SHADER;
+  vh->subtype = (uint16_t)bcode->stage;
+  vdx12_shader* vdx12_sh = (vdx12_shader*)vis_malloc(sizeof(vdx12_shader));
+  vis_mem_check(vdx12_sh);
+  vdx12_sh->bcode = *bcode;
+  vdx12_sh->bcode.blob->AddRef();
+  vh->obj = vdx12_sh;
+  return vh;
+}
+
+vis_handle vdx12_create_render_target(vis* vi, void* data, uint32_t flags)
+{
+  VIS_ASSERT(data!=nullptr);
+  vis_handle data_handle = (vis_handle)data;
+  VIS_ASSERT_ALWAYS(data_handle->type == VIS_TYPE_RENDER_TARGET_ACQUIRED && "must to be this type");
+
+  // handlers and objs
+  vis_handle vh = (vis_handle)vis_malloc(sizeof(vis_h));
+  vis_mem_check(vh);
+  vh->type = VIS_TYPE_RENDER_TARGET;
+  vh->subtype = (uint16_t)flags;
+  vdx12_render_target* vdx12rt = (vdx12_render_target*)vis_malloc(sizeof(vdx12_render_target));
+  vis_mem_check(vdx12rt);
+  vh->obj = vdx12rt;
+
+  // Describe and create a render target view (RTV) descriptor heap.
+  D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+  rtvHeapDesc.NumDescriptors = 1; // one RT
+  rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+  rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+  vdx12_throwfailed(vi->d3d12device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&vdx12rt->rtv_heap)));
+  vdx12rt->rtv_size = vi->d3d12device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+  // get the buffer from the acquired resource
+  vdx12rt->rt = (ID3D12Resource*)data_handle->obj;
+  vdx12rt->rt->AddRef();
+  vdx12_throwfailed(vi->swapchain->GetBuffer( (UINT)data, IID_PPV_ARGS(&vdx12rt->rt)));
+  
+  // create RT View
+  CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(vdx12rt->rtv_heap->GetCPUDescriptorHandleForHeapStart());
+  vi->d3d12device->CreateRenderTargetView(vdx12rt->rt, nullptr, rtvHandle);
+
+  return vh;
+}
+
+
+int32_t vdx12_release_vertex_buffer(vis* vi, vis_handle* resource)
 {
   if (!(*resource)->obj)
-    return;
+    return VIS_FALSE;
 
   vdx12_vertex_buffer* dx12vb = (vdx12_vertex_buffer*)(*resource)->obj;
   vis_saferelease(dx12vb->vb);
   vis_saferelease(dx12vb->vb_staging);
-  vis_free(dx12vb);
-  vis_free((*resource));
-  *resource = nullptr;
+  return VIS_TRUE;
+}
+
+int32_t vdx12_release_shader(vis* vi, vis_handle* resource)
+{
+  if (!(*resource)->obj)
+    return VIS_FALSE;
+  vdx12_shader* dx12sh = (vdx12_shader*)(*resource)->obj;
+  vis_shader_release_bytecode(vi, &dx12sh->bcode);
+  return VIS_TRUE;
+}
+
+int32_t vdx12_release_render_target(vis* vi, vis_handle* resource)
+{
+  if (!(*resource)->obj)
+    return VIS_FALSE;
+
+  int32_t retval = VIS_TRUE;
+  if ((*resource)->type == VIS_TYPE_RENDER_TARGET)
+  {
+    vdx12_render_target* dx12rt = (vdx12_render_target*)(*resource)->obj;
+    vis_saferelease(dx12rt->rt);
+    vis_saferelease(dx12rt->rtv_heap);
+  }
+  else // VIS_TYPE_RENDER_TARGET_ACQUIRED
+  {
+    ID3D12Resource* rtres = (ID3D12Resource*)(*resource)->obj;
+    vis_saferelease(rtres);
+    retval = VIS_FALSE;
+  }
+  return retval;
 }
 
 #ifdef _MSC_VER

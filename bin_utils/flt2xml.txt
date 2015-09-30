@@ -14,7 +14,7 @@ You can also specify the information you want per vertex.
 ```
 flt2xml: Dumps (Unique Faces version) Openflight metadata in xml format
 
-Usage: $ flt2xml.exe <options> <flt_file>
+Usage: $ flt2xml <options> <flt_file>
 Options:
          -t   : Inspect texture headers.
          -a   : Dump all information (vertices/faces)
@@ -25,13 +25,13 @@ Supported image formats: rgb, rgba, sgi, jpg, jpeg, png, tga, bmp, dds
 
 Examples:
         Dump all information recursively into a xml file:
-          $ flt2xml.exe master.flt -t -a -r > alldb.xml
+          $ flt2xml master.flt -t -a -r > alldb.xml
 
         Only writes structure info into xml:
-          $ flt2xml.exe model.flt > model.xml
+          $ flt2xml model.flt > model.xml
 
         Dump only single precision Position and Normals of model.flt:
-          $ flt2xml.exe -a -v psn tank.flt > tank.xml
+          $ flt2xml -a -v pn tank.flt > tank.xml
 
 
 ```
