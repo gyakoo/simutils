@@ -1589,6 +1589,11 @@ extern "C" {
     UINT rtv_size;
   }vdx12_render_target;
 
+  typedef struct vdx12_root_signature
+  {
+    ID3D12RootSignature* rootsig;
+  }vdx12_root_signature;
+
   typedef struct vis
   {
     ID3D12Device* d3d12device;
@@ -1616,6 +1621,7 @@ void vdx12_getHardwareAdapter(_In_ IDXGIFactory4* pFactory, _Outptr_result_maybe
 vis_handle vdx12_create_vertex_buffer(vis* vi, void* data, uint32_t size);
 vis_handle vdx12_create_shader(vis* vi, vis_shader_bytecode* bcode, uint32_t flags);
 vis_handle vdx12_create_render_target(vis* vi, void* data, uint32_t flags);
+vis_handle vdx12_create_signature_root(vis* vi, vis_shader_layout* shlayout, uint32_t flags);
 int32_t vdx12_release_vertex_buffer(vis* vi, vis_handle* resource);
 int32_t vdx12_release_shader(vis* vi, vis_handle* resource);
 int32_t vdx12_release_render_target(vis* vi, vis_handle* resource);
@@ -1757,6 +1763,7 @@ vis_handle vis_create_resource(vis* vi, uint16_t type, void* resData, uint32_t f
     case VIS_TYPE_VERTEXBUFFER: res = vdx12_create_vertex_buffer(vi, resData, flags); break;
     case VIS_TYPE_SHADER: res = vdx12_create_shader(vi, (vis_shader_bytecode*)resData, flags);
     case VIS_TYPE_RENDER_TARGET: res = vdx12_create_render_target(vi, resData, flags); break;
+    case VIS_TYPE_SHADER_LAYOUT: res = vdx12_create_signature_root(vi, (vis_shader_layout*)resData, flags); break;
   }
   return res;
 }
@@ -2013,6 +2020,32 @@ vis_handle vdx12_create_render_target(vis* vi, void* data, uint32_t flags)
   return vh;
 }
 
+vis_handle vdx12_create_signature_root(vis* vi, vis_shader_layout* shlayout, uint32_t flags)
+{
+  CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
+  rootSignatureDesc.Init(0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+  vis_handle vh = (vis_handle)vis_malloc(sizeof(vis_h));
+  vis_mem_check(vh);
+  vh->type = VIS_TYPE_SHADER_LAYOUT;
+  vh->subtype = flags;
+  
+  vdx12_root_signature* dx12rsig = (vdx12_root_signature*)vis_malloc(sizeof(vdx12_root_signature));
+  vis_mem_check(dx12rsig);
+  vh->obj = dx12rsig;
+
+  ID3DBlob* signature = nullptr;
+  ID3DBlob* err_blob = nullptr;
+  HRESULT hr = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &err_blob);
+  vdx12_throwfailed(hr);
+
+  hr = vi->d3d12device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&dx12rsig->rootsig));
+  vdx12_throwfailed(hr);
+
+  vis_saferelease(signature);
+  vis_saferelease(err_blob);
+  return vh;
+}
 
 int32_t vdx12_release_vertex_buffer(vis* vi, vis_handle* resource)
 {
