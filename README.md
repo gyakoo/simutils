@@ -15,17 +15,17 @@ library    | lastest version | category | description
 **vis.h** | 0.1a | rendering | Rendering functions, specific implementations vis_dx11, vis_dx12, vis_gl
 
 # Utils
-Set of applications and small tools making use of these libraries.
-* flt2dds : Converts images into Direct Draw Surface (DDS) format.
-* flt2elev: Generate elevation maps out of flt files.
+Set of tools making use of these libraries, c++11.
+* flt2dds : Converts concurrently images into Direct Draw Surface (DDS) format using nvtt.
+* flt2elev: Generate elevation maps out of flt files. Mosaic mode which generates every tile concurrently.
 * flt2xml : Dumps openflight information into xml.
-* fltextent: Dumps extent information of flt files.
-* fltfind : Searchs for openflight files with specific opcodes
+* fltextent: Dumps information about extension and bounding volumes of flt files.
+* fltfind : Searchs for openflight files with specific opcodes.
 * fltheader: Dumps header information of flt files.
 * fltmlod : Makes files with LOD structure out of xml specification and external references.
-* fltview : Visualizes an openflight file.
-* cigitest: Test of cigi lib.
-* dx12test: Test of vis_dx12.
+* fltview : Visualizes an openflight file (wip).
+* cigitest: Test of cigi lib (wip).
+* dx12test: Test of vis_dx12 (wip).
 
 # Why single file headers?
 
