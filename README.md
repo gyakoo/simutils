@@ -27,6 +27,9 @@ Set of tools making use of these libraries, c++11.
 * cigitest: Test of cigi lib (wip).
 * dx12test: Test of vis_dx12 (wip).
 
+# Building
+You'll need premake (extern/premake5.exe) tool for building. Just click the .bat file to generate corresponding VS solution or generate your own target batch file.
+
 # Why single file headers?
 
 Citing <a href="https://github.com/nothings/stb/blob/master/README.md">nothings/stb</a>:
