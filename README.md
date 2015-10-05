@@ -5,14 +5,14 @@ List of small utility libraries written in C/C++ for simulation related work.
 
 # Libraries
 
-library    | lastest version | category | description
----------- | --------------- | ---------| ------------
-**pip.h** | 0.1a | communications | Foundation socket library based in IP protocol (UDP/TCP)
-**cigi.h** | 0.1a | communications | Common Image Generator Interface implementation
-**proj.h** | 0.1a | projections | Functions to convert between different projections
-**flt.h** | 0.1a | openflight | Load geometry and other metadata from Openflight files
-**sgi.h** | 0.1a | openflight | Decode SGI RGB/RGBA format from file. RLE and Verbatim modes supported
-**vis.h** | 0.1a | rendering | Rendering functions, specific implementations vis_dx11, vis_dx12, vis_gl
+library    | category | description
+---------- | ---------| ------------
+**flt.h** | openflight | Load geometry and other metadata from Openflight files
+**cigi.h** | communications | Common Image Generator Interface implementation
+**sgi.h** | openflight | Decode SGI RGB/RGBA format from file. RLE and Verbatim modes supported
+**pip.h** | communications | Foundation socket library based in IP protocol (UDP/TCP)
+**proj.h** | projections | Functions to convert between different projections
+**vis.h** | rendering | Rendering functions, specific implementations vis_dx11, vis_dx12, vis_gl
 
 # Utils
 Set of tools making use of these libraries, c++11.
