@@ -2022,9 +2022,6 @@ vis_handle vdx12_create_render_target(vis* vi, void* data, uint32_t flags)
 
 vis_handle vdx12_create_signature_root(vis* vi, vis_shader_layout* shlayout, uint32_t flags)
 {
-  CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
-  rootSignatureDesc.Init(0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
-
   vis_handle vh = (vis_handle)vis_malloc(sizeof(vis_h));
   vis_mem_check(vh);
   vh->type = VIS_TYPE_SHADER_LAYOUT;
@@ -2033,6 +2030,9 @@ vis_handle vdx12_create_signature_root(vis* vi, vis_shader_layout* shlayout, uin
   vdx12_root_signature* dx12rsig = (vdx12_root_signature*)vis_malloc(sizeof(vdx12_root_signature));
   vis_mem_check(dx12rsig);
   vh->obj = dx12rsig;
+
+  CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
+  rootSignatureDesc.Init(0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
   ID3DBlob* signature = nullptr;
   ID3DBlob* err_blob = nullptr;
