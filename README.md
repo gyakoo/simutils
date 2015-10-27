@@ -10,9 +10,9 @@ library    | category | description
 **flt.h** | openflight | Load geometry and other metadata from Openflight files
 **sgi.h** | openflight | Decode SGI RGB/RGBA format from file. RLE and Verbatim modes supported
 **vis.h** | rendering | Rendering functions, specific implementations vis_dx11, vis_dx12, vis_gl
-**cigi.h** | communications | Common Image Generator Interface implementation (planned)
-**pip.h** | communications | Foundation socket library based in IP protocol (UDP/TCP) (planned)
-**proj.h** | projections | Functions to convert between different projections (planned)
+<strike>**cigi.h** | <strike>communications | <strike>Common Image Generator Interface implementation (planned)
+<strike>**pip.h** | <strike>communications | <strike>Foundation socket library based in IP protocol (UDP/TCP) (planned)
+<strike>**proj.h** | <strike>projections | <strike>Functions to convert between different projections (planned)
 
 
 # Utils
