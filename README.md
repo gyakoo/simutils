@@ -3,6 +3,8 @@
 
 List of small utility libraries written in C/C++ for simulation related work.
 
+Most of the work is about Openflight parsing and storing.
+
 # Libraries
 
 library    | category | description
